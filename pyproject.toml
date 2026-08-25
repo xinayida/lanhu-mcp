@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lanhu-mcp"
+version = "0.1.0"
+description = "Lanhu (蓝湖) MCP Server — Extract design annotations, layer styles, and download assets directly for AI coding agents."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "xinayida" }
+]
+keywords = [
+    "mcp",
+    "model-context-protocol",
+    "lanhu",
+    "design-to-code",
+    "ai-agent",
+    "cursor",
+    "claude",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: User Interfaces",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0.0",
+    "httpx>=0.27.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.0.0",
+    "pillow>=10.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/xinayida/lanhu-mcp"
+Repository = "https://github.com/xinayida/lanhu-mcp.git"
+Issues = "https://github.com/xinayida/lanhu-mcp/issues"
+
+[project.scripts]
+lanhu-mcp = "lanhu_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lanhu_mcp"]
