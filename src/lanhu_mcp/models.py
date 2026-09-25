@@ -182,7 +182,7 @@ class LanhuAsset(BaseModel):
     """切图 / 图标资源"""
     id: str
     name: str
-    format: str = "png"  # png / jpg / svg / webp
+    format: str = "webp"  # webp / svg
     scale: str = "1x"
     width: Optional[float] = None
     height: Optional[float] = None

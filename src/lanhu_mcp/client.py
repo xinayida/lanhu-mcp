@@ -548,16 +548,6 @@ class LanhuClient:
                         download_url=img["imageUrl"],
                     )
                 )
-                out.append(
-                    LanhuAsset(
-                        id=f"{nid}:png",
-                        name=name,
-                        format="png",
-                        width=self._to_float(size.get("width")),
-                        height=self._to_float(size.get("height")),
-                        download_url=img["imageUrl"],
-                    )
-                )
             for c in node.get("layers") or []:
                 if isinstance(c, dict):
                     traverse(c)
@@ -1084,7 +1074,7 @@ class LanhuClient:
     # ─────────────────────────── 切图资源 ────────────────────────
 
     def _parse_assets(self, nodes: list[dict]) -> list[LanhuAsset]:
-        """可导出（exportable）图层即切图，image 里有 svg/png 直链，位图默认提供 webp"""
+        """可导出（exportable）图层即切图：svgUrl 提供 svg，imageUrl 统一提供 webp"""
         out: list[LanhuAsset] = []
         for n in nodes:
             if not n.get("exportable"):
@@ -1111,18 +1101,10 @@ class LanhuClient:
                         download_url=img["imageUrl"],
                     )
                 )
-                out.append(
-                    LanhuAsset(
-                        id=f"{nid}:png", name=name, format="png",
-                        width=self._to_float(size.get("width")),
-                        height=self._to_float(size.get("height")),
-                        download_url=img["imageUrl"],
-                    )
-                )
         return out
 
     async def get_assets(self, project_id: str, image_id: str, team_id: str) -> list[LanhuAsset]:
-        """获取设计图中的切图列表（svg/webp/png 直链，无需认证即可下载）"""
+        """获取设计图中的切图列表（svg 为矢量图标，webp 为位图切图）"""
         _, dds = await self._fetch_dds(project_id, image_id, team_id)
         if "artboard" in dds:
             return self._parse_figma_assets(dds.get("artboard") or {})
@@ -1131,7 +1113,7 @@ class LanhuClient:
     async def download_asset(
         self, asset: LanhuAsset, save_dir: Optional[str] = None
     ) -> str:
-        """下载切图资源到本地文件，若格式为 webp 则自动将位图转换为 WebP 格式，返回保存路径"""
+        """下载切图资源到本地文件。所有位图切图统一转换为 WebP 格式保存，矢量图标保持 SVG 格式。"""
         if not asset.download_url:
             raise LanhuAPIError(f"资源 {asset.name} 没有下载链接")
 
@@ -1140,25 +1122,32 @@ class LanhuClient:
         save_path = Path(save_dir).expanduser()
         save_path.mkdir(parents=True, exist_ok=True)
 
-        ext = (asset.format or "webp").lower()
-        safe_name = re.sub(r"[^\w\-.]", "_", asset.name)
-        file_path = save_path / f"{safe_name}.{ext}"
+        # 清除文件名可能自带的图片后缀，避免生成类似 icon.png.webp 的文件名
+        clean_name = re.sub(r"\.(png|jpe?g|webp|svg)$", "", asset.name, flags=re.IGNORECASE)
+        safe_name = re.sub(r"[^\w\-]", "_", clean_name).strip("_") or "asset"
 
         async with httpx.AsyncClient(timeout=60.0, follow_redirects=True, trust_env=False) as client:
             resp = await client.get(asset.download_url)  # OSS 直链，公开
             resp.raise_for_status()
 
-            if ext == "webp":
-                if resp.content.strip().startswith(b"<svg") or resp.content.strip().startswith(b"<?xml"):
-                    file_path = save_path / f"{safe_name}.svg"
-                    file_path.write_bytes(resp.content)
-                else:
-                    import io
-                    from PIL import Image
-                    with Image.open(io.BytesIO(resp.content)) as im:
-                        im.save(file_path, format="WEBP", lossless=True)
+            content = resp.content
+            # 判断是否为 SVG 矢量图
+            is_svg = (
+                content.strip().startswith(b"<svg")
+                or content.strip().startswith(b"<?xml")
+                or b"<svg" in content[:300]
+            )
+
+            if is_svg:
+                file_path = save_path / f"{safe_name}.svg"
+                file_path.write_bytes(content)
             else:
-                file_path.write_bytes(resp.content)
+                # 所有位图一律以高质量无损 WebP 格式保存
+                import io
+                from PIL import Image
+                file_path = save_path / f"{safe_name}.webp"
+                with Image.open(io.BytesIO(content)) as im:
+                    im.save(file_path, format="WEBP", lossless=True)
 
         logger.info(f"已下载: {file_path} ({file_path.stat().st_size} bytes)")
         return str(file_path)

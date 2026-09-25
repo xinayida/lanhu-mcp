@@ -199,7 +199,7 @@ async def lanhu_get_assets(
     image_id: Annotated[str, Field(description="设计图 ID")],
     team_id: Annotated[str, Field(description="团队 ID")],
 ) -> list[dict]:
-    """获取设计图中所有可下载的切图/图标资源列表（含 svg/png 直链）。"""
+    """获取设计图中所有可下载的切图/图标资源列表（矢量图为 svg，位图切图统一为 webp）。"""
     _ensure_auth()
     assets = await _client.get_assets(project_id, image_id, team_id)
     return [a.model_dump() for a in assets]
@@ -211,10 +211,10 @@ async def lanhu_download_asset(
     asset_id: Annotated[str, Field(description="资源 ID（从 lanhu_get_assets 获取）")],
     asset_name: Annotated[str, Field(description="资源名称，用作文件名")],
     download_url: Annotated[str, Field(description="下载链接（从 lanhu_get_assets 获取）")],
-    format: Annotated[str, Field(description="文件格式：webp/svg/png（位图切图默认推荐 webp）")] = "webp",
+    format: Annotated[str, Field(description="文件格式：webp 或 svg（位图切图统一自动转换为 webp 保存，矢量图标为 svg）")] = "webp",
     save_dir: Annotated[Optional[str], Field(description="保存目录（可选，默认 ~/Downloads/lanhu_assets）")] = None,
 ) -> dict:
-    """下载指定的切图/图标到本地文件（位图默认自动转为 WebP 格式），返回保存路径。
+    """下载指定的切图/图标到本地文件（所有位图切图统一自动转换为 WebP 格式保存，矢量图标保持 SVG 格式），返回保存路径。
 
     需要先调用 lanhu_get_assets 获取资源的 download_url 等信息。
     """
