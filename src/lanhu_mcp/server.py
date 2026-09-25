@@ -264,53 +264,112 @@ def _screen_full(screen: Any) -> dict:
             }
         if layer.border_radius is not None:
             d["border_radius"] = layer.border_radius
+        if layer.border_radii:
+            d["border_radii"] = layer.border_radii
         if layer.text_content:
             d["text"] = layer.text_content
         if layer.font:
             font = layer.font
-            d["font"] = {
-                k: v
-                for k, v in {
-                    "size": font.size,
-                    "weight": font.weight,
-                    "family": font.family,
-                    "line_height": font.line_height,
-                    "letter_spacing": font.letter_spacing,
-                    "color": font.color.to_hex() if font.color else None,
-                    "text_align": font.text_align,
-                }.items()
-                if v is not None
-            }
+            font_dict: dict = {}
+            if font.size is not None:
+                font_dict["size"] = font.size
+            if font.weight:
+                font_dict["weight"] = font.weight
+            if font.family:
+                font_dict["family"] = font.family
+            if font.line_height is not None:
+                font_dict["line_height"] = font.line_height
+            if font.letter_spacing is not None:
+                font_dict["letter_spacing"] = font.letter_spacing
+            if font.text_align:
+                font_dict["text_align"] = font.text_align
+            if font.color:
+                font_dict["color"] = font.color.to_hex()
+                font_dict["color_rgba"] = font.color.to_rgba()
+                if font.color.a < 1.0:
+                    font_dict["opacity"] = font.color.a
+            if font.color_name or (font.color and font.color.name):
+                font_dict["color_name"] = font.color_name or font.color.name
+            if font.spans and len(font.spans) > 1:
+                font_dict["spans"] = [
+                    {
+                        k: v
+                        for k, v in {
+                            "text": s.text,
+                            "size": s.size,
+                            "weight": s.weight,
+                            "family": s.family,
+                            "color": s.color.to_hex() if s.color else None,
+                            "color_rgba": s.color.to_rgba() if s.color else None,
+                        }.items()
+                        if v is not None
+                    }
+                    for s in font.spans
+                ]
+            d["font"] = font_dict
         if layer.fills:
-            d["fills"] = [
-                {
+            fills_out = []
+            for f in layer.fills:
+                f_dict: dict = {
                     "type": f.type,
-                    "color": f.color.to_hex() if f.color else None,
                     "opacity": f.opacity,
                 }
-                for f in layer.fills
-            ]
+                if f.color:
+                    f_dict["color"] = f.color.to_hex()
+                    f_dict["color_rgba"] = f.color.to_rgba()
+                if f.color_name:
+                    f_dict["color_name"] = f.color_name
+                if f.gradient:
+                    f_dict["gradient"] = {
+                        "type": f.gradient.type,
+                        "angle": f.gradient.angle,
+                        "css": f.gradient.to_css(),
+                        "stops": [
+                            {
+                                "position": s.position,
+                                "color": s.color.to_hex() if s.color else None,
+                                "color_rgba": s.color.to_rgba() if s.color else None,
+                            }
+                            for s in f.gradient.stops
+                        ],
+                    }
+                fills_out.append(f_dict)
+            d["fills"] = fills_out
         if layer.borders:
-            d["borders"] = [
-                {
+            borders_out = []
+            for b in layer.borders:
+                b_dict: dict = {
                     "width": b.width,
-                    "color": b.color.to_hex() if b.color else None,
                     "style": b.style,
                     "position": b.position,
                 }
-                for b in layer.borders
-            ]
+                if b.color:
+                    b_dict["color"] = b.color.to_hex()
+                    b_dict["color_rgba"] = b.color.to_rgba()
+                if b.color_name:
+                    b_dict["color_name"] = b.color_name
+                b_dict["css"] = b.to_css()
+                borders_out.append(b_dict)
+            d["borders"] = borders_out
         if layer.shadows:
-            d["shadows"] = [
-                {
+            shadows_out = []
+            for s in layer.shadows:
+                s_dict: dict = {
                     "x": s.x,
                     "y": s.y,
                     "blur": s.blur,
                     "spread": s.spread,
-                    "color": s.color.to_hex() if s.color else None,
                 }
-                for s in layer.shadows
-            ]
+                if s.color:
+                    s_dict["color"] = s.color.to_hex()
+                    s_dict["color_rgba"] = s.color.to_rgba()
+                if s.inner:
+                    s_dict["inner"] = True
+                s_dict["css"] = s.to_css()
+                shadows_out.append(s_dict)
+            d["shadows"] = shadows_out
+        if layer.css:
+            d["css"] = layer.css
         if layer.children:
             d["children"] = [layer_to_dict(c) for c in layer.children]
         return d
