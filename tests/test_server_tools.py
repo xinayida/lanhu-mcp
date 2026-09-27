@@ -8,10 +8,21 @@ from lanhu_mcp.server import (
     lanhu_list_product_documents,
     lanhu_get_pages,
     lanhu_get_page_content,
+    lanhu_batch_export_assets,
+    lanhu_get_design_tokens,
+    lanhu_get_layout_skeleton,
     _screen_summary,
     _screen_full,
 )
-from lanhu_mcp.models import LanhuScreen, LanhuAsset, LanhuProductDoc, LanhuAxurePage
+from lanhu_mcp.models import (
+    LanhuScreen,
+    LanhuAsset,
+    LanhuProductDoc,
+    LanhuAxurePage,
+    LanhuDesignTokens,
+    LanhuColorToken,
+    LanhuLayoutNode,
+)
 
 
 def test_screen_summary_oversized():
@@ -109,4 +120,72 @@ async def test_server_get_page_content_with_url():
         assert res["name"] == "登录页"
         assert res["text_content"] == ["需求描述1"]
         mock_content.assert_awaited_once_with("p1", "doc-1", "登录页", None)
+
+
+@pytest.mark.asyncio
+async def test_server_batch_export_assets_with_url():
+    with patch("lanhu_mcp.server._ensure_auth"), \
+         patch("lanhu_mcp.server._client.get_assets", new_callable=AsyncMock) as mock_assets, \
+         patch("lanhu_mcp.server._client.batch_download_assets", new_callable=AsyncMock) as mock_batch:
+        mock_assets.return_value = [
+            LanhuAsset(id="a1", name="icon", format="svg", download_url="http://example.com/icon.svg")
+        ]
+        mock_batch.return_value = {
+            "total_count": 1,
+            "success_count": 1,
+            "assets": [{"name": "icon", "status": "success"}],
+        }
+        url = "https://lanhuapp.com/web/#/item/project/detailDetach?pid=p1&image_id=img1"
+        res = await lanhu_batch_export_assets(url=url)
+        assert res["total_count"] == 1
+        assert res["success_count"] == 1
+        mock_assets.assert_awaited_once_with("p1", "img1", None)
+
+
+@pytest.mark.asyncio
+async def test_server_get_design_tokens_with_formats():
+    with patch("lanhu_mcp.server._ensure_auth"), \
+         patch("lanhu_mcp.server._client.get_design_tokens", new_callable=AsyncMock) as mock_tokens:
+        mock_tokens.return_value = LanhuDesignTokens(
+            colors=[LanhuColorToken(token_name="color-primary", hex="#458CFF", rgba="rgba(69,140,255,1)")],
+            font_sizes=[14.0, 16.0],
+            radii=[8.0],
+        )
+        url = "https://lanhuapp.com/web/#/item/project/stage?tid=t1&pid=p1"
+
+        # 默认 json 格式
+        res_json = await lanhu_get_design_tokens(url=url, format="json")
+        assert len(res_json["colors"]) == 1
+        assert res_json["colors"][0]["token_name"] == "color-primary"
+
+        # css 变量格式
+        res_css = await lanhu_get_design_tokens(url=url, format="css")
+        assert res_css["format"] == "css"
+        assert "--color-primary: #458CFF;" in res_css["code"]
+
+        # tailwind 配置格式
+        res_tw = await lanhu_get_design_tokens(url=url, format="tailwind")
+        assert res_tw["format"] == "tailwind"
+        assert "primary" in res_tw["config"]["colors"]
+
+
+@pytest.mark.asyncio
+async def test_server_get_layout_skeleton_with_url():
+    with patch("lanhu_mcp.server._ensure_auth"), \
+         patch("lanhu_mcp.server._client.get_layout_skeleton", new_callable=AsyncMock) as mock_skeleton:
+        mock_skeleton.return_value = LanhuLayoutNode(
+            id="root",
+            name="Main Page",
+            tag="main",
+            display="flex",
+            direction="column",
+            classes=["flex", "flex-col", "gap-4"],
+        )
+        url = "https://lanhuapp.com/web/#/item/project/detailDetach?pid=p1&image_id=img1"
+        res = await lanhu_get_layout_skeleton(url=url)
+        assert res["tag"] == "main"
+        assert res["direction"] == "column"
+        assert "flex-col" in res["classes"]
+        mock_skeleton.assert_awaited_once_with("p1", "img1", team_id=None)
+
 

@@ -34,8 +34,10 @@ mcp = MCPServer(
     version=__version__,
     instructions=(
         "蓝湖设计稿与原型文档 MCP。最快捷方式：直接调用 lanhu_inspect_url(url) 查看任意蓝湖页面、画板或 Axure 原型链接；"
-        "设计稿流程：lanhu_set_cookie 认证 → lanhu_get_screens → lanhu_get_annotations 读取标注 → lanhu_download_asset 下载切图；"
-        "原型/PRD 流程：lanhu_list_product_documents → lanhu_get_pages 获取页面目录 → lanhu_get_page_content 提取需求说明与便签。"
+        "设计系统与代码生成：lanhu_get_design_tokens 提取色板字体等全局 Token；lanhu_get_layout_skeleton 智能推断响应式 Flexbox 骨架与 Tailwind 类名；"
+        "切图资源：lanhu_batch_export_assets 批量导出画板切图并生成 manifest.json 清单；"
+        "设计稿流程：lanhu_get_screens → lanhu_get_annotations 读取标注；"
+        "原型/PRD 流程：lanhu_list_product_documents → lanhu_get_pages → lanhu_get_page_content。"
     ),
 )
 
@@ -279,6 +281,32 @@ async def lanhu_download_asset(
     return {"success": True, "file_path": file_path, "message": f"已下载到: {file_path}"}
 
 
+@mcp.tool()
+@_lanhu_errors
+async def lanhu_batch_export_assets(
+    project_id: Annotated[Optional[str], Field(description="项目 ID（若提供 url 则可选）")] = None,
+    image_id: Annotated[Optional[str], Field(description="画板 ID（若提供 url 则可选）")] = None,
+    team_id: Annotated[Optional[str], Field(description="团队 ID（可选）")] = None,
+    url: Annotated[Optional[str], Field(description="蓝湖单图画板链接（提供时自动提取参数）")] = None,
+    save_dir: Annotated[Optional[str], Field(description="切图保存目录（默认 ~/Downloads/lanhu_assets）")] = None,
+) -> dict:
+    """批量导出画板中所有切图资源，并在目标目录自动生成 manifest.json 清单。支持直接传入蓝湖链接。"""
+    _ensure_auth()
+    if url:
+        parsed = parse_lanhu_url(url)
+        project_id = project_id or parsed.project_id
+        image_id = image_id or parsed.image_id
+        team_id = team_id or parsed.team_id
+    if not project_id or not image_id:
+        raise ToolError("缺少 project_id 或 image_id 参数，请提供对应 ID 或传入单图链接")
+
+    assets = await _client.get_assets(project_id, image_id, team_id)
+    if not assets:
+        return {"total_count": 0, "success_count": 0, "message": "该画板未包含可导出的切图资源"}
+
+    return await _client.batch_download_assets(assets, save_dir=save_dir)
+
+
 # ─────────────────────── 工具：PRD / 原型文档 (Axure) ──────────
 
 
@@ -349,6 +377,70 @@ async def lanhu_get_page_content(
         raise ToolError("缺少 project_id 或 doc_id 参数，请提供对应 ID 或传入包含 pid 与 doc_id 的原型链接")
     page = await _client.get_axure_page_content(project_id, doc_id, page_name, team_id)
     return page.model_dump()
+
+
+# ─────────────────────── 工具：设计规范 Token 与智能布局骨架 ───
+
+
+@mcp.tool()
+@_lanhu_errors
+async def lanhu_get_design_tokens(
+    project_id: Annotated[Optional[str], Field(description="项目 ID（若提供 url 则可选）")] = None,
+    image_id: Annotated[Optional[str], Field(description="画板 ID（可选，指定时仅提取单画板，不指定提取项目代表画板）")] = None,
+    team_id: Annotated[Optional[str], Field(description="团队 ID（可选）")] = None,
+    url: Annotated[Optional[str], Field(description="蓝湖画板或项目链接（提供时自动提取参数）")] = None,
+    format: Annotated[
+        str,
+        Field(
+            description=(
+                "导出格式：'json' (结构化对象), 'css' (原生 CSS 变量样式表), "
+                "'tailwind' (Tailwind theme.extend 配置), 'w3c' (W3C DTCG 规范 JSON)"
+            )
+        ),
+    ] = "json",
+) -> dict:
+    """聚合提取画板或设计项目中的 Design Tokens（全局色板、字号阶梯、字重、圆角与阴影规范）。支持直接传入蓝湖链接。"""
+    _ensure_auth()
+    if url:
+        parsed = parse_lanhu_url(url)
+        project_id = project_id or parsed.project_id
+        image_id = image_id or parsed.image_id
+        team_id = team_id or parsed.team_id
+    if not project_id:
+        raise ToolError("缺少 project_id 参数，请提供 project_id 或传入蓝湖链接")
+
+    tokens = await _client.get_design_tokens(project_id, image_id=image_id, team_id=team_id)
+
+    fmt = format.lower().strip()
+    if fmt == "css":
+        return {"format": "css", "code": tokens.to_css_variables()}
+    elif fmt == "tailwind":
+        return {"format": "tailwind", "config": tokens.to_tailwind_config()}
+    elif fmt == "w3c":
+        return {"format": "w3c", "tokens": tokens.to_w3c_tokens()}
+    return tokens.model_dump()
+
+
+@mcp.tool()
+@_lanhu_errors
+async def lanhu_get_layout_skeleton(
+    project_id: Annotated[Optional[str], Field(description="项目 ID（若提供 url 则可选）")] = None,
+    image_id: Annotated[Optional[str], Field(description="设计图画板 ID（若提供 url 则可选）")] = None,
+    team_id: Annotated[Optional[str], Field(description="团队 ID（可选）")] = None,
+    url: Annotated[Optional[str], Field(description="蓝湖单图画板链接（提供时自动提取参数）")] = None,
+) -> dict:
+    """智能推断画板的 Flexbox 流式布局骨架树，包含语义化 HTML 标签、Flex 方向、间隙 (Gap)、内边距 (Padding) 与 Tailwind 类名。支持直接传入单图链接。"""
+    _ensure_auth()
+    if url:
+        parsed = parse_lanhu_url(url)
+        project_id = project_id or parsed.project_id
+        image_id = image_id or parsed.image_id
+        team_id = team_id or parsed.team_id
+    if not project_id or not image_id:
+        raise ToolError("缺少 project_id 或 image_id 参数，请提供对应 ID 或传入单图链接")
+
+    skeleton = await _client.get_layout_skeleton(project_id, image_id, team_id=team_id)
+    return skeleton.model_dump()
 
 
 # ─────────────────────── 辅助函数 ──────────────────────────────

@@ -270,3 +270,114 @@ class LanhuAxurePage(BaseModel):
     notes: dict[str, Any] = Field(default_factory=dict)
 
 
+# ─────────────────────────── 设计规范 Token ──────────────────
+
+class LanhuColorToken(BaseModel):
+    """颜色 Token"""
+    token_name: str  # 例如 "color-primary", "color-text-main"
+    hex: str
+    rgba: str
+    count: int = 1
+    raw_name: Optional[str] = None  # 设计稿中原有的色板名称
+
+
+class LanhuDesignTokens(BaseModel):
+    """设计系统 Tokens 集合"""
+    colors: list[LanhuColorToken] = Field(default_factory=list)
+    font_families: list[str] = Field(default_factory=list)
+    font_sizes: list[float] = Field(default_factory=list)
+    font_weights: list[str] = Field(default_factory=list)
+    line_heights: list[float] = Field(default_factory=list)
+    radii: list[float] = Field(default_factory=list)
+    shadows: list[str] = Field(default_factory=list)
+
+    def to_css_variables(self) -> str:
+        """导出为原生 CSS 变量样式表 (:root { ... })"""
+        lines = [":root {"]
+        lines.append("  /* Colors */")
+        for c in self.colors:
+            lines.append(f"  --{c.token_name}: {c.hex};")
+        if self.font_families:
+            lines.append("  /* Typography */")
+            lines.append(f"  --font-family-primary: {self.font_families[0]};")
+        if self.font_sizes:
+            for i, sz in enumerate(self.font_sizes):
+                lines.append(f"  --font-size-{i+1}: {sz}px;")
+        if self.radii:
+            lines.append("  /* Radii */")
+            for i, r in enumerate(self.radii):
+                lines.append(f"  --radius-{i+1}: {r}px;")
+        lines.append("}")
+        return "\n".join(lines)
+
+    def to_tailwind_config(self) -> dict[str, Any]:
+        """导出为 Tailwind theme.extend 扩展配置对象"""
+        colors_dict: dict[str, str] = {}
+        for c in self.colors:
+            clean_name = c.token_name.replace("color-", "").replace("-", "_")
+            colors_dict[clean_name] = c.hex
+
+        font_size_dict: dict[str, str] = {
+            f"size-{int(sz)}": f"{sz}px" for sz in self.font_sizes
+        }
+        border_radius_dict: dict[str, str] = {
+            f"rad-{int(r)}": f"{r}px" for r in self.radii
+        }
+        return {
+            "colors": colors_dict,
+            "fontSize": font_size_dict,
+            "borderRadius": border_radius_dict,
+        }
+
+    def to_w3c_tokens(self) -> dict[str, Any]:
+        """导出为符合 W3C DTCG 规范的 Design Tokens JSON 结构"""
+        color_tokens = {}
+        for c in self.colors:
+            color_tokens[c.token_name] = {
+                "$value": c.hex,
+                "$type": "color",
+                "$description": c.raw_name or f"Used {c.count} times",
+            }
+
+        font_size_tokens = {}
+        for sz in self.font_sizes:
+            font_size_tokens[f"font-size-{int(sz)}"] = {
+                "$value": f"{sz}px",
+                "$type": "dimension",
+            }
+
+        radius_tokens = {}
+        for r in self.radii:
+            radius_tokens[f"radius-{int(r)}"] = {
+                "$value": f"{r}px",
+                "$type": "dimension",
+            }
+
+        return {
+            "color": color_tokens,
+            "fontSize": font_size_tokens,
+            "borderRadius": radius_tokens,
+        }
+
+
+# ─────────────────────────── 布局骨架 (Layout Skeleton) ───────
+
+class LanhuLayoutNode(BaseModel):
+    """智能推断的 Flexbox 布局节点"""
+    id: str
+    name: str
+    tag: str = "div"  # div, p, span, button, img 等
+    display: str = "flex"  # flex, block, relative, absolute
+    direction: Optional[str] = None  # row, column
+    gap: Optional[float] = None
+    padding: Optional[dict[str, float]] = None  # top, right, bottom, left
+    bounds: Optional[LanhuBounds] = None
+    classes: list[str] = Field(default_factory=list)  # Tailwind classes
+    text: Optional[str] = None
+    asset_id: Optional[str] = None
+    children: list["LanhuLayoutNode"] = Field(default_factory=list)
+
+
+LanhuLayoutNode.model_rebuild()
+
+

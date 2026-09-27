@@ -26,11 +26,13 @@ from .models import (
     LanhuBorder,
     LanhuBounds,
     LanhuColor,
+    LanhuDesignTokens,
     LanhuFill,
     LanhuFont,
     LanhuGradient,
     LanhuGradientStop,
     LanhuLayer,
+    LanhuLayoutNode,
     LanhuProductDoc,
     LanhuProject,
     LanhuScreen,
@@ -1678,6 +1680,100 @@ class LanhuClient:
 
         logger.info(f"已下载: {file_path} ({file_path.stat().st_size} bytes)")
         return str(file_path)
+
+    async def batch_download_assets(
+        self, assets: list[LanhuAsset], save_dir: Optional[str] = None
+    ) -> dict:
+        """批量并发下载切图资源，并在目标目录生成 manifest.json 清单"""
+        if not save_dir:
+            save_dir = os.getenv("LANHU_DOWNLOAD_DIR", "~/Downloads/lanhu_assets")
+        save_path = Path(save_dir).expanduser()
+        save_path.mkdir(parents=True, exist_ok=True)
+
+        import asyncio
+        from datetime import datetime
+
+        # 并发控制：最多 5 个并发下载
+        sem = asyncio.Semaphore(5)
+
+        async def _download_one(asset: LanhuAsset) -> dict:
+            async with sem:
+                try:
+                    file_path = await self.download_asset(asset, save_dir=str(save_path))
+                    p = Path(file_path)
+                    clean_id = re.sub(r"[^\w]", "_", asset.name).strip("_")
+                    var_name = "".join(part.capitalize() for part in clean_id.split("_") if part) or "Asset"
+                    rel_path = f"./{p.name}"
+                    return {
+                        "id": asset.id,
+                        "name": asset.name,
+                        "format": p.suffix.lstrip("."),
+                        "file_path": str(p),
+                        "file_name": p.name,
+                        "relative_path": rel_path,
+                        "size_bytes": p.stat().st_size if p.exists() else 0,
+                        "width": asset.width,
+                        "height": asset.height,
+                        "import_statement": f"import {var_name} from '{rel_path}';",
+                        "status": "success",
+                    }
+                except Exception as e:
+                    logger.warning(f"下载切图 {asset.name} 失败: {e}")
+                    return {
+                        "id": asset.id,
+                        "name": asset.name,
+                        "status": "failed",
+                        "error": str(e),
+                    }
+
+        tasks = [_download_one(a) for a in assets]
+        results = await asyncio.gather(*tasks) if tasks else []
+
+        manifest = {
+            "export_time": datetime.now().isoformat(),
+            "total_count": len(assets),
+            "success_count": sum(1 for r in results if r.get("status") == "success"),
+            "save_dir": str(save_path),
+            "assets": results,
+        }
+
+        # 写入 manifest.json
+        manifest_file = save_path / "manifest.json"
+        manifest_file.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        return manifest
+
+    async def get_design_tokens(
+        self, project_id: str, image_id: Optional[str] = None, team_id: Optional[str] = None
+    ) -> LanhuDesignTokens:
+        """从单个画板或项目代表性画板中聚合提取 Design Tokens"""
+        from .tokens import extract_design_tokens
+
+        if image_id:
+            screen = await self.get_annotations(project_id, image_id, team_id=team_id)
+            return extract_design_tokens(screen)
+
+        screens = await self.get_screens(project_id, team_id=team_id)
+        # 为避免单次请求过多，取前 10 张代表性画板分析标注
+        target_screens = screens[:10]
+        full_screens: list[LanhuScreen] = []
+        for s in target_screens:
+            try:
+                full_s = await self.get_annotations(project_id, s.id, team_id=team_id)
+                full_screens.append(full_s)
+            except Exception as e:
+                logger.warning(f"获取画板 {s.id} 标注失败: {e}")
+
+        return extract_design_tokens(full_screens if full_screens else screens)
+
+    async def get_layout_skeleton(
+        self, project_id: str, image_id: str, team_id: Optional[str] = None
+    ) -> LanhuLayoutNode:
+        """推断单个画板的智能 Flexbox 响应式布局骨架树"""
+        from .layout import infer_screen_skeleton
+
+        screen = await self.get_annotations(project_id, image_id, team_id=team_id)
+        return infer_screen_skeleton(screen)
 
 
 # 边框位置中英映射

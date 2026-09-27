@@ -292,6 +292,9 @@ args = ["--from", "git+https://github.com/xinayida/lanhu-mcp.git", "lanhu-mcp"]
 | `lanhu_get_annotations` | **⭐ 核心工具**：获取单张设计图的完整图层树与 CSS 标注数据，支持直接传入单图 `url` | `project_id` & `image_id` 或 `url`, `team_id` (可选) |
 | `lanhu_get_assets` | 获取画板中所有可导出的切图/图标直链资源列表，支持直接传入 `url` | `project_id` & `image_id` 或 `url`, `team_id` (可选) |
 | `lanhu_download_asset` | 下载切图到本地磁盘（位图自动转 WebP，矢量图保存为 SVG，具超大图安全防护） | `asset_id`, `asset_name`, `download_url`, `format`, `save_dir` |
+| `lanhu_batch_export_assets` | 批量导出画板中所有切图资源，并在目标目录自动生成 `manifest.json` 清单 | `project_id` & `image_id` 或 `url`, `save_dir` (可选) |
+| `lanhu_get_design_tokens` | **🎨 设计系统**：提取色板、字号、字重、圆角、阴影等全局规范 Token，支持导出 CSS/Tailwind/W3C 规范 | `project_id` / `url`, `image_id` (可选), `format` (`json`/`css`/`tailwind`/`w3c`) |
+| `lanhu_get_layout_skeleton` | **📐 布局推断**：自动将绝对定位图层树转为现代 Flexbox 流式骨架树与 Tailwind 类名 | `project_id` & `image_id` 或 `url` |
 | `lanhu_list_product_documents` | 获取项目下的所有产品文档/Axure 原型文档列表，支持直接传入 `url` | `project_id` 或 `url`, `team_id` (可选) |
 | `lanhu_get_pages` | 获取 Axure 原型的完整页面目录树 (Sitemap) 与清单，支持直接传入 `url` | `project_id` & `doc_id` 或 `url`, `team_id` (可选) |
 | `lanhu_get_page_content` | 提取 Axure 页面的需求说明文本、黄色便签 (annotations) 与备注 (notes) | `page_name`, `project_id` & `doc_id` 或 `url`, `team_id` (可选) |
@@ -512,6 +515,39 @@ print(page["annotations"])    # 提取黄色交互便签与备注
     "页面状态": "提供验证码登录与密码登录两种切换形态"
   }
 }
+```
+
+### 方式四：设计系统 Tokens 与智能响应式布局骨架生成
+
+无需人工从大量绝对坐标图层中寻找规律，通过内置的算法引擎一键完成**规范提取**与**代码骨架转换**：
+
+```mermaid
+graph LR
+    A[蓝湖画板图层] --> B[lanhu_get_design_tokens]
+    A --> C[lanhu_get_layout_skeleton]
+    B --> D[CSS 变量 / Tailwind 配置 / W3C Tokens]
+    C --> E[Flexbox 流式结构 + Tailwind 响应式代码]
+```
+
+#### 1. 提取全局设计系统 Tokens
+```python
+# 导出为原生 CSS 变量样式表
+css_tokens = lanhu_get_design_tokens(url="https://lanhuapp.com/web/#/item/project/stage?tid=xxx&pid=yyy", format="css")
+
+# 导出为 Tailwind 扩展配置
+tailwind_config = lanhu_get_design_tokens(url="https://lanhuapp.com/web/#/item/project/stage?tid=xxx&pid=yyy", format="tailwind")
+```
+
+#### 2. 智能推断 Flexbox 响应式布局骨架
+```python
+# 自动将绝对坐标推断为语义化 HTML 标签 (header/button/h1/div) 与 Flex 流向 (flex-row / flex-col / gap / padding)
+skeleton = lanhu_get_layout_skeleton(url="https://lanhuapp.com/web/#/item/project/detailDetach?pid=xxx&image_id=yyy")
+```
+
+#### 3. 批量导出画板切图与生成清单
+```python
+# 一键下载所有切图资源，并生成前端工程可直接引入的 manifest.json (含 import 语句)
+res = lanhu_batch_export_assets(url="https://lanhuapp.com/web/#/item/project/detailDetach?pid=xxx&image_id=yyy", save_dir="src/assets")
 ```
 
 ---

@@ -284,6 +284,9 @@ Add to `.vscode/mcp.json`:
 | `lanhu_get_annotations` | **⭐ Core Tool**: Retrieve deep layer tree, typography, colors, CSS, and slice links, supports `url` | `project_id` & `image_id` or `url`, `team_id` (optional) |
 | `lanhu_get_assets` | List exportable slice assets (SVG for vectors, WebP for bitmaps), supports `url` | `project_id` & `image_id` or `url`, `team_id` (optional) |
 | `lanhu_download_asset` | Download slices locally (bitmaps auto-converted to WebP, vectors saved as SVG, with oversized image safety) | `asset_id`, `asset_name`, `download_url`, `format`, `save_dir` |
+| `lanhu_batch_export_assets` | Batch export all slices from an artboard and generate frontend-ready `manifest.json` | `project_id` & `image_id` or `url`, `save_dir` (optional) |
+| `lanhu_get_design_tokens` | **🎨 Design Tokens**: Extract global palette, typography scales, radii, and shadows into CSS/Tailwind/W3C formats | `project_id` / `url`, `image_id` (optional), `format` (`json`/`css`/`tailwind`/`w3c`) |
+| `lanhu_get_layout_skeleton` | **📐 Layout Inference**: Intelligently transform absolute coordinate trees into Flexbox layout trees and Tailwind classes | `project_id` & `image_id` or `url` |
 | `lanhu_list_product_documents` | List all product PRD / Axure prototype documents under a project, supports `url` | `project_id` or `url`, `team_id` (optional) |
 | `lanhu_get_pages` | Retrieve complete Axure prototype page tree (Sitemap) & page manifest, supports `url` | `project_id` & `doc_id` or `url`, `team_id` (optional) |
 | `lanhu_get_page_content` | Extract requirement text, yellow sticky annotations, and notes from an Axure page | `page_name`, `project_id` & `doc_id` or `url`, `team_id` (optional) |
@@ -470,6 +473,39 @@ page = await client.get_axure_page_content(
 )
 print(page.text_content)   # DOM text content & business rules
 print(page.annotations)    # Yellow sticky interaction notes
+```
+
+### Option 4: Design Tokens & Intelligent Responsive Layout Skeleton
+
+Instead of manually deciphering thousands of absolute pixel coordinates, use built-in algorithms to automatically infer **Design Tokens** and **Flexbox Layout Skeletons**:
+
+```mermaid
+graph LR
+    A[Lanhu Artboard Layers] --> B[lanhu_get_design_tokens]
+    A --> C[lanhu_get_layout_skeleton]
+    B --> D[CSS Vars / Tailwind Config / W3C Tokens]
+    C --> E[Semantic Flexbox Tree + Tailwind Classes]
+```
+
+#### 1. Extract Global Design Tokens
+```python
+# Export as native CSS variables (:root)
+css_tokens = await client.get_design_tokens(url="https://lanhuapp.com/web/#/item/project/stage?tid=xxx&pid=yyy", format="css")
+
+# Export as Tailwind theme.extend configuration
+tw_config = await client.get_design_tokens(url="https://lanhuapp.com/web/#/item/project/stage?tid=xxx&pid=yyy", format="tailwind")
+```
+
+#### 2. Infer Flexbox Layout Skeleton
+```python
+# Automatically transforms absolute coordinates to semantic HTML tags (header/button/h1/div) and Flexbox flow (flex-row / flex-col / gap / padding)
+skeleton = await client.get_layout_skeleton(url="https://lanhuapp.com/web/#/item/project/detailDetach?pid=xxx&image_id=yyy")
+```
+
+#### 3. Batch Export Slices & Generate Manifest
+```python
+# Download all slices and generate frontend-ready manifest.json with JS import statements
+res = await client.batch_download_assets(assets, save_dir="src/assets")
 ```
 
 ---
