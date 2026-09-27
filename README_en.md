@@ -284,6 +284,9 @@ Add to `.vscode/mcp.json`:
 | `lanhu_get_annotations` | **⭐ Core Tool**: Retrieve deep layer tree, typography, colors, CSS, and slice links, supports `url` | `project_id` & `image_id` or `url`, `team_id` (optional) |
 | `lanhu_get_assets` | List exportable slice assets (SVG for vectors, WebP for bitmaps), supports `url` | `project_id` & `image_id` or `url`, `team_id` (optional) |
 | `lanhu_download_asset` | Download slices locally (bitmaps auto-converted to WebP, vectors saved as SVG, with oversized image safety) | `asset_id`, `asset_name`, `download_url`, `format`, `save_dir` |
+| `lanhu_list_product_documents` | List all product PRD / Axure prototype documents under a project, supports `url` | `project_id` or `url`, `team_id` (optional) |
+| `lanhu_get_pages` | Retrieve complete Axure prototype page tree (Sitemap) & page manifest, supports `url` | `project_id` & `doc_id` or `url`, `team_id` (optional) |
+| `lanhu_get_page_content` | Extract requirement text, yellow sticky annotations, and notes from an Axure page | `page_name`, `project_id` & `doc_id` or `url`, `team_id` (optional) |
 
 ---
 
@@ -440,6 +443,33 @@ await client.download_asset(assets[0])
     }
   ]
 }
+```
+
+### Option 3: Axure Prototype & PRD Document Analysis
+
+Beyond visual UI designs, Axure prototypes and PRD documents hosted on Lanhu provide crucial context for business logic and interactions. This project extracts them via **pure lightweight APIs** (zero browser required):
+
+```mermaid
+graph LR
+    A[1. lanhu_list_product_documents] --> B[2. lanhu_get_pages]
+    B --> C[3. lanhu_get_page_content]
+    C --> D[4. AI Generates Business Logic / Interaction Code / Tests]
+```
+
+#### Example Usage
+
+```python
+# 1. Inspect prototype URL directly (returns sitemap overview)
+result = await client.inspect_url("https://lanhuapp.com/web/#/item/project/productDoc?pid=xxx&doc_id=yyy")
+
+# 2. Or extract requirements text and interaction notes for a specific page
+page = await client.get_axure_page_content(
+    project_id="xxx",
+    doc_id="yyy",
+    page_name="Login"
+)
+print(page.text_content)   # DOM text content & business rules
+print(page.annotations)    # Yellow sticky interaction notes
 ```
 
 ---

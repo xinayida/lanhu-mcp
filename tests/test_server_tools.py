@@ -5,10 +5,13 @@ from lanhu_mcp.server import (
     lanhu_get_screens,
     lanhu_get_annotations,
     lanhu_get_assets,
+    lanhu_list_product_documents,
+    lanhu_get_pages,
+    lanhu_get_page_content,
     _screen_summary,
     _screen_full,
 )
-from lanhu_mcp.models import LanhuScreen, LanhuAsset
+from lanhu_mcp.models import LanhuScreen, LanhuAsset, LanhuProductDoc, LanhuAxurePage
 
 
 def test_screen_summary_oversized():
@@ -55,3 +58,55 @@ async def test_server_get_annotations_with_url():
         res = await lanhu_get_annotations(url=url)
         assert res["id"] == "img1"
         mock_anno.assert_awaited_once_with("p1", "img1", None)
+
+
+@pytest.mark.asyncio
+async def test_server_list_product_documents_with_url():
+    with patch("lanhu_mcp.server._ensure_auth"), \
+         patch("lanhu_mcp.server._client.get_product_documents", new_callable=AsyncMock) as mock_docs:
+        mock_docs.return_value = [
+            LanhuProductDoc(id="doc-1", name="PRD", project_id="p1")
+        ]
+        url = "https://lanhuapp.com/web/#/item/project/stage?tid=t1&pid=p1"
+        res = await lanhu_list_product_documents(url=url)
+        assert len(res) == 1
+        assert res[0]["id"] == "doc-1"
+        mock_docs.assert_awaited_once_with("p1", "t1")
+
+
+@pytest.mark.asyncio
+async def test_server_get_pages_with_url():
+    with patch("lanhu_mcp.server._ensure_auth"), \
+         patch("lanhu_mcp.server._client.get_axure_sitemap", new_callable=AsyncMock) as mock_sitemap:
+        mock_sitemap.return_value = {
+            "doc_id": "doc-1",
+            "doc_name": "PRD",
+            "project_id": "p1",
+            "version": "1.0",
+            "page_count": 2,
+            "pages": [{"name": "首页"}],
+        }
+        url = "https://lanhuapp.com/web/#/item/project/productDoc?pid=p1&doc_id=doc-1"
+        res = await lanhu_get_pages(url=url)
+        assert res["doc_id"] == "doc-1"
+        assert res["page_count"] == 2
+        mock_sitemap.assert_awaited_once_with("p1", "doc-1", None)
+
+
+@pytest.mark.asyncio
+async def test_server_get_page_content_with_url():
+    with patch("lanhu_mcp.server._ensure_auth"), \
+         patch("lanhu_mcp.server._client.get_axure_page_content", new_callable=AsyncMock) as mock_content:
+        mock_content.return_value = LanhuAxurePage(
+            id="page-1",
+            name="登录页",
+            filename="登录页.html",
+            text_content=["需求描述1"],
+            annotations=[{"label": "输入框", "note": "必填"}],
+        )
+        url = "https://lanhuapp.com/web/#/item/project/productDoc?pid=p1&doc_id=doc-1"
+        res = await lanhu_get_page_content(page_name="登录页", url=url)
+        assert res["name"] == "登录页"
+        assert res["text_content"] == ["需求描述1"]
+        mock_content.assert_awaited_once_with("p1", "doc-1", "登录页", None)
+

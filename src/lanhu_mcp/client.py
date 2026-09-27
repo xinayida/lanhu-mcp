@@ -8,6 +8,8 @@ API 契约（2026-08 逆向自 lanhuapp.com webapp）：
 
 from __future__ import annotations
 
+import html
+import json
 import logging
 import math
 import os
@@ -20,6 +22,7 @@ import httpx
 from .auth import LanhuAuth, LanhuAuthError
 from .models import (
     LanhuAsset,
+    LanhuAxurePage,
     LanhuBorder,
     LanhuBounds,
     LanhuColor,
@@ -28,12 +31,14 @@ from .models import (
     LanhuGradient,
     LanhuGradientStop,
     LanhuLayer,
+    LanhuProductDoc,
     LanhuProject,
     LanhuScreen,
     LanhuShadow,
     LanhuTeam,
     LanhuTextSpan,
 )
+from .url_parser import parse_lanhu_url
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +52,147 @@ class LanhuAPIError(Exception):
         super().__init__(msg)
         self.code = code
         self.raw = raw
+
+
+# ─────────────────────────── UTF-16 与 Axure 辅助函数 ─────────────
+
+
+def slice_utf16_text(text: str, start: int, length: int) -> str:
+    """根据 UTF-16 code unit 偏移与长度切片字符串，防止因 Emoji 等代理对产生偏移或断裂"""
+    if not text or length <= 0 or start < 0:
+        return ""
+    raw_bytes = text.encode("utf-16-le")
+    byte_start = start * 2
+    byte_end = (start + length) * 2
+    if byte_start >= len(raw_bytes):
+        return ""
+    slice_bytes = raw_bytes[byte_start:byte_end]
+    return slice_bytes.decode("utf-16-le", errors="ignore")
+
+
+def extract_axure_pages_from_sitemap(sitemap: dict) -> list[dict]:
+    """从 Axure sitemap 树结构中提取所有页面列表（展平为一维列表）"""
+    root_nodes = sitemap.get("rootNodes") or sitemap.get("pages") or []
+    if isinstance(sitemap, list):
+        root_nodes = sitemap
+
+    pages: list[dict] = []
+
+    def walk(nodes: list[dict], parent_folder: str = "根目录", path_prefix: str = "", level: int = 0) -> None:
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            name = node.get("pageName") or node.get("name") or ""
+            node_type = node.get("type") or "Wireframe"
+            url = node.get("url") or ""
+            children = node.get("children") or []
+            current_path = f"{path_prefix}/{name}" if path_prefix else name
+
+            if node_type == "Folder" or not url:
+                # 文件夹节点
+                walk(children, parent_folder=name, path_prefix=current_path, level=level + 1)
+            else:
+                # 页面节点
+                pages.append({
+                    "id": str(node.get("id") or ""),
+                    "name": name,
+                    "filename": url,
+                    "type": node_type,
+                    "level": level,
+                    "folder": parent_folder,
+                    "path": current_path,
+                    "has_children": bool(children),
+                })
+                if children:
+                    walk(children, parent_folder=name, path_prefix=current_path, level=level + 1)
+
+    walk(root_nodes)
+    return pages
+
+
+def extract_axure_page_text(html_content: str) -> list[str]:
+    """从 Axure 页面 HTML 中提取需求文本段落列表，自动清除标签并解码 HTML 实体"""
+    if not html_content:
+        return []
+
+    # 优先匹配 class 包含 text 的容器（Axure 默认文本容器）
+    pattern = re.compile(
+        r'<div[^>]*class=["\'][^"\']*\btext\b[^"\']*["\'][^>]*>(.*?)</div>',
+        re.DOTALL | re.IGNORECASE,
+    )
+    matches = pattern.findall(html_content)
+
+    results: list[str] = []
+    tag_cleaner = re.compile(r"<[^>]+>")
+
+    for match in matches:
+        cleaned = tag_cleaner.sub(" ", match)
+        unescaped = html.unescape(cleaned)
+        normalized = re.sub(r"[ \t]+", " ", unescaped).strip()
+        if normalized:
+            results.append(normalized)
+
+    # 兜底：如果没匹配到带 text 类的 div，尝试提取所有 <p> 标签
+    if not results:
+        p_pattern = re.compile(r"<p[^>]*>(.*?)</p>", re.DOTALL | re.IGNORECASE)
+        for p in p_pattern.findall(html_content):
+            cleaned = tag_cleaner.sub(" ", p)
+            unescaped = html.unescape(cleaned)
+            normalized = re.sub(r"\s+", " ", unescaped).strip()
+            if normalized:
+                results.append(normalized)
+
+    return results
+
+
+def parse_axure_data_js(js_content: str) -> dict:
+    """解析 Axure 页面 data.js 脚本，提取页面便签 annotations、备注 notes 及组件 objects"""
+    if not js_content:
+        return {"name": "", "annotations": [], "notes": {}, "objects": []}
+
+    first_brace = js_content.find("{")
+    last_brace = js_content.rfind("}")
+    if first_brace == -1 or last_brace == -1 or last_brace <= first_brace:
+        return {"name": "", "annotations": [], "notes": {}, "objects": []}
+
+    try:
+        data = json.loads(js_content[first_brace : last_brace + 1])
+    except Exception as e:
+        logger.warning(f"解析 Axure data.js JSON 失败: {e}")
+        return {"name": "", "annotations": [], "notes": {}, "objects": []}
+
+    page = data.get("page") or {}
+    page_name = page.get("name") or ""
+    raw_annos = page.get("annotations") or []
+    clean_annos: list[dict[str, Any]] = []
+
+    for a in raw_annos:
+        if not isinstance(a, dict):
+            continue
+        label = a.get("label") or a.get("name") or ""
+        note = a.get("note") or a.get("注释") or a.get("说明") or a.get("content") or ""
+        if not note:
+            for k, v in a.items():
+                if k not in ("fn", "label", "ownerId", "id") and isinstance(v, str):
+                    note = v
+                    break
+        clean_annos.append({
+            "label": label,
+            "note": note,
+            "owner_id": a.get("ownerId") or a.get("id"),
+            "raw": a,
+        })
+
+    notes = page.get("notes") or {}
+    diagram = page.get("diagram") or {}
+    objects = diagram.get("objects") or []
+
+    return {
+        "name": page_name,
+        "annotations": clean_annos,
+        "notes": notes,
+        "objects": objects,
+    }
 
 
 class LanhuClient:
@@ -121,6 +267,11 @@ class LanhuClient:
             raise LanhuAPIError(
                 f"响应不是 JSON 格式，HTTP {resp.status_code}: {text_head}"
             )
+
+        if not isinstance(data, dict):
+            if resp.status_code >= 400:
+                raise LanhuAPIError(f"API 请求失败 HTTP {resp.status_code}: {resp.text[:200]}")
+            return data
 
         code = data.get("code", -1)
         if isinstance(code, str) and code.isdigit():
@@ -403,13 +554,19 @@ class LanhuClient:
             for s in styles:
                 if not isinstance(s, dict):
                     continue
+                content = str(s.get("content") or s.get("value") or "")
+                if not content and layer.text_content:
+                    loc = s.get("location") if s.get("location") is not None else s.get("start")
+                    length = s.get("length") if s.get("length") is not None else s.get("len")
+                    if loc is not None and length is not None:
+                        content = slice_utf16_text(layer.text_content, int(loc), int(length))
                 sc = self._parse_color(s.get("color")) or color
                 sf = s.get("font") if isinstance(s.get("font"), dict) else s
                 s_family = sf.get("name") or sf.get("family") or family
                 s_weight = self._normalize_font_weight(sf.get("fontWeight") or sf.get("weight"), s_family or "")
                 spans.append(
                     LanhuTextSpan(
-                        text=str(s.get("content") or s.get("value") or ""),
+                        text=content,
                         size=self._to_float(sf.get("size") or sf.get("fontSize")) or size,
                         weight=s_weight,
                         family=s_family,
@@ -700,6 +857,12 @@ class LanhuClient:
             for s in styles:
                 if not isinstance(s, dict):
                     continue
+                content = str(s.get("content") or "")
+                if not content and layer.text_content:
+                    loc = s.get("location") if s.get("location") is not None else s.get("start")
+                    length = s.get("length") if s.get("length") is not None else s.get("len")
+                    if loc is not None and length is not None:
+                        content = slice_utf16_text(layer.text_content, int(loc), int(length))
                 sc = self._parse_color(s.get("color")) or color
                 if sc and f_color and f_color.name and not sc.name:
                     sc.name = f_color.name
@@ -707,7 +870,7 @@ class LanhuClient:
                 s_weight = self._normalize_font_weight(s.get("fontWeight"), s_family or "")
                 spans.append(
                     LanhuTextSpan(
-                        text=str(s.get("content") or ""),
+                        text=content,
                         size=self._to_float(s.get("size")) or size,
                         weight=s_weight,
                         family=s_family,
@@ -1126,6 +1289,198 @@ class LanhuClient:
         result = await self._post("/api/share/url/resolve", json={"short_id": sid})
         return result or {}
 
+    # ─────────────────────────── 原型 / 产品文档 (Axure) ───────────
+
+    async def _resolve_team_id_for_project(self, project_id: str) -> Optional[str]:
+        """尝试反查 project_id 所属的 team_id"""
+        try:
+            teams = await self.get_teams()
+            if not teams:
+                return None
+            if len(teams) == 1:
+                return teams[0].id
+            for t in teams:
+                try:
+                    res = await self._post(
+                        "/workbench/api/workbench/abstractfile/list",
+                        json={"tenantId": t.id, "fid": "all"},
+                    )
+                    if isinstance(res, list):
+                        for item in res:
+                            if item.get("sourceId") == project_id:
+                                return t.id
+                except Exception:
+                    continue
+            return teams[0].id
+        except Exception as e:
+            logger.debug(f"反查 team_id 失败: {e}")
+            return None
+
+    async def get_product_documents(
+        self, project_id: str, team_id: str | None = None
+    ) -> list[LanhuProductDoc]:
+        """获取项目下的产品需求/Axure 原型文档列表"""
+        if not team_id:
+            team_id = await self._resolve_team_id_for_project(project_id)
+        params = {"project_id": project_id}
+        if team_id:
+            params["team_id"] = team_id
+        result = await self._get("/api/project/product_documents", params=params)
+        if not isinstance(result, list):
+            return []
+
+        out: list[LanhuProductDoc] = []
+        for doc in result:
+            if not isinstance(doc, dict):
+                continue
+            doc_id = str(doc.get("id") or "")
+            out.append(
+                LanhuProductDoc(
+                    id=doc_id,
+                    name=doc.get("name") or "",
+                    type=doc.get("type") or "axure",
+                    project_id=project_id,
+                    team_id=team_id,
+                    last_version_num=doc.get("last_version_num"),
+                    latest_version=str(doc.get("latest_version") or ""),
+                    create_time=str(doc.get("create_time") or ""),
+                    update_time=str(doc.get("update_time") or ""),
+                    url=f"https://lanhuapp.com/web/#/item/project/productDoc?pid={project_id}&doc_id={doc_id}",
+                )
+            )
+        return out
+
+    async def get_axure_sitemap(
+        self, project_id: str, doc_id: str, team_id: str | None = None
+    ) -> dict:
+        """获取 Axure 文档的目录结构（sitemap）及页面清单"""
+        if not team_id:
+            team_id = await self._resolve_team_id_for_project(project_id)
+        params = {"image_id": doc_id, "project_id": project_id}
+        if team_id:
+            params["team_id"] = team_id
+
+        # 1. 查询文档版本及公开 OSS json_url
+        result = await self._get("/api/project/image", params=params)
+        if not isinstance(result, dict):
+            raise LanhuAPIError(f"未找到文档 {doc_id} 的信息")
+
+        versions = result.get("versions") or []
+        if not versions:
+            raise LanhuAPIError(f"文档 {doc_id} 没有可用版本")
+
+        version_info = versions[0]
+        json_url = version_info.get("json_url")
+        if not json_url:
+            raise LanhuAPIError(f"文档 {doc_id} 未找到 json_url 数据地址")
+
+        # 2. 从 OSS 拉取 sitemap json
+        async with self._download_http_client() as client:
+            resp = await client.get(json_url)
+            resp.raise_for_status()
+            sitemap_data = resp.json()
+
+        raw_sitemap = sitemap_data.get("sitemap") or sitemap_data
+        pages = extract_axure_pages_from_sitemap(raw_sitemap)
+        base_url = json_url.rsplit("/", 1)[0]
+
+        return {
+            "doc_id": doc_id,
+            "project_id": project_id,
+            "doc_name": result.get("name") or "",
+            "version": version_info.get("version_num") or version_info.get("id"),
+            "base_url": base_url,
+            "page_count": len(pages),
+            "pages": pages,
+            "pages_manifest": sitemap_data.get("pages") or {},
+        }
+
+    async def get_axure_page_content(
+        self, project_id: str, doc_id: str, page_name_or_url: str, team_id: str | None = None
+    ) -> LanhuAxurePage:
+        """读取 Axure 原型单个页面的需求文本、黄色便签 (annotations) 与备注 (notes)"""
+        sitemap_info = await self.get_axure_sitemap(project_id, doc_id, team_id=team_id)
+        pages = sitemap_info.get("pages") or []
+        base_url = sitemap_info.get("base_url") or ""
+        pages_manifest = sitemap_info.get("pages_manifest") or {}
+
+        # 查找目标页面
+        target_page_dict: Optional[dict] = None
+        target_query = page_name_or_url.strip()
+        for p in pages:
+            if target_query in (p.get("name"), p.get("filename"), p.get("id"), p.get("path")):
+                target_page_dict = p
+                break
+        if not target_page_dict:
+            # 模糊匹配名称
+            for p in pages:
+                if (
+                    target_query.lower() in p.get("name", "").lower()
+                    or target_query.lower() in p.get("filename", "").lower()
+                ):
+                    target_page_dict = p
+                    break
+
+        if not target_page_dict:
+            raise LanhuAPIError(f"在文档中未找到页面: {page_name_or_url}")
+
+        filename = target_page_dict.get("filename") or ""
+        page_obj = LanhuAxurePage(
+            id=target_page_dict.get("id") or "",
+            name=target_page_dict.get("name") or "",
+            filename=filename,
+            type=target_page_dict.get("type") or "Wireframe",
+            level=target_page_dict.get("level") or 0,
+            folder=target_page_dict.get("folder") or "根目录",
+            path=target_page_dict.get("path") or "",
+            has_children=target_page_dict.get("has_children", False),
+        )
+
+        manifest_entry = pages_manifest.get(filename) or {}
+        html_url = None
+        data_js_url = None
+
+        if isinstance(manifest_entry, dict):
+            html_info = manifest_entry.get("html") or {}
+            if isinstance(html_info, dict) and html_info.get("sign_md5"):
+                html_url = f"{base_url}/{html_info['sign_md5']}.html"
+            data_info = manifest_entry.get("dataJs") or {}
+            if isinstance(data_info, dict) and data_info.get("sign_md5"):
+                data_js_url = f"{base_url}/pages/{data_info['sign_md5']}.js"
+
+        if not html_url and base_url and filename:
+            html_url = f"{base_url}/{filename}"
+
+        async with self._download_http_client() as client:
+            # 提取 HTML 文本
+            if html_url:
+                try:
+                    resp = await client.get(html_url)
+                    if resp.status_code == 200:
+                        page_obj.text_content = extract_axure_page_text(resp.text)
+                except Exception as e:
+                    logger.warning(f"下载页面 HTML 失败 ({html_url}): {e}")
+
+            # 提取 data.js 数据
+            stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+            candidate_js_urls = [data_js_url] if data_js_url else []
+            candidate_js_urls.append(f"{base_url}/files/{stem}/data.js")
+
+            for js_url in candidate_js_urls:
+                if not js_url:
+                    continue
+                try:
+                    resp = await client.get(js_url)
+                    if resp.status_code == 200:
+                        parsed_js = parse_axure_data_js(resp.text)
+                        page_obj.annotations = parsed_js.get("annotations") or []
+                        page_obj.notes = parsed_js.get("notes") or {}
+                        break
+                except Exception as e:
+                    logger.debug(f"尝试下载 data.js ({js_url}) 失败: {e}")
+
+        return page_obj
+
     async def inspect_url(self, url: str) -> dict:
         """智能解析任意蓝湖 URL 并返回相应项目画板/单图详情/文档信息"""
         from .url_parser import parse_lanhu_url
@@ -1215,6 +1570,38 @@ class LanhuClient:
             }
 
         if parsed.url_type == "product_doc":
+            sitemap_info = None
+            if parsed.project_id and parsed.doc_id:
+                try:
+                    sitemap_info = await self.get_axure_sitemap(
+                        parsed.project_id, parsed.doc_id, team_id=parsed.team_id
+                    )
+                except Exception as e:
+                    logger.warning(f"inspect_url 获取原型 sitemap 失败: {e}")
+
+            if sitemap_info:
+                pages = sitemap_info.get("pages") or []
+                return {
+                    "type": "product_doc",
+                    "url": url,
+                    "parsed": parsed.model_dump(),
+                    "doc_name": sitemap_info.get("doc_name"),
+                    "page_count": len(pages),
+                    "pages": [
+                        {
+                            "name": p.get("name"),
+                            "filename": p.get("filename"),
+                            "folder": p.get("folder"),
+                            "path": p.get("path"),
+                        }
+                        for p in pages
+                    ],
+                    "message": (
+                        f"成功识别 Axure/原型文档《{sitemap_info.get('doc_name')}》，包含 {len(pages)} 个页面。"
+                        f"可调用 lanhu_get_page_content(url='...', page_name=...) 查看特定页面的需求说明与便签。"
+                    ),
+                }
+
             return {
                 "type": "product_doc",
                 "url": url,

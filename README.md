@@ -292,6 +292,9 @@ args = ["--from", "git+https://github.com/xinayida/lanhu-mcp.git", "lanhu-mcp"]
 | `lanhu_get_annotations` | **⭐ 核心工具**：获取单张设计图的完整图层树与 CSS 标注数据，支持直接传入单图 `url` | `project_id` & `image_id` 或 `url`, `team_id` (可选) |
 | `lanhu_get_assets` | 获取画板中所有可导出的切图/图标直链资源列表，支持直接传入 `url` | `project_id` & `image_id` 或 `url`, `team_id` (可选) |
 | `lanhu_download_asset` | 下载切图到本地磁盘（位图自动转 WebP，矢量图保存为 SVG，具超大图安全防护） | `asset_id`, `asset_name`, `download_url`, `format`, `save_dir` |
+| `lanhu_list_product_documents` | 获取项目下的所有产品文档/Axure 原型文档列表，支持直接传入 `url` | `project_id` 或 `url`, `team_id` (可选) |
+| `lanhu_get_pages` | 获取 Axure 原型的完整页面目录树 (Sitemap) 与清单，支持直接传入 `url` | `project_id` & `doc_id` 或 `url`, `team_id` (可选) |
+| `lanhu_get_page_content` | 提取 Axure 页面的需求说明文本、黄色便签 (annotations) 与备注 (notes) | `page_name`, `project_id` & `doc_id` 或 `url`, `team_id` (可选) |
 
 ---
 
@@ -454,6 +457,60 @@ lanhu_download_asset(
       "download_url": "https://..."
     }
   ]
+}
+```
+
+### 方式三：Axure 原型与 PRD 需求文档分析
+
+除了 UI 标注外，蓝湖托管的 Axure 原型和产品文档（PRD）也是 AI 理解业务逻辑与交互需求的关键信息源。本工具采用**纯轻量 API 逆向提取**（无需任何浏览器进程），秒级提取原型目录结构与业务说明：
+
+```mermaid
+graph LR
+    A[1. lanhu_list_product_documents] --> B[2. lanhu_get_pages]
+    B --> C[3. lanhu_get_page_content]
+    C --> D[4. AI 生成业务逻辑 / 交互状态 / 单元测试]
+```
+
+#### 原型分析调用示例
+
+```python
+# 1. 快捷单入口：直接查看原型文档概览（自动拉取页面目录）
+result = lanhu_inspect_url("https://lanhuapp.com/web/#/item/project/productDoc?pid=xxx&doc_id=yyy")
+
+# 2. 或手动提取单页面需求文本与交互便签
+page = lanhu_get_page_content(
+    url="https://lanhuapp.com/web/#/item/project/productDoc?pid=xxx&doc_id=yyy",
+    page_name="登录页"
+)
+print(page["text_content"])   # 提取页面所有 DOM 文本与业务规则
+print(page["annotations"])    # 提取黄色交互便签与备注
+```
+
+#### 原型页面数据返回示例 (`LanhuAxurePage`)
+
+```json
+{
+  "id": "u0",
+  "name": "登录页",
+  "filename": "登录页.html",
+  "type": "Wireframe",
+  "folder": "用户中心",
+  "path": "用户中心/登录页",
+  "text_content": [
+    "登录即代表同意用户协议与隐私条款",
+    "用户名规则：支持手机号/邮箱，4-20位字符",
+    "密码规则：6-20位字母数字组合"
+  ],
+  "annotations": [
+    {
+      "label": "登录按钮",
+      "note": "未勾选协议时置灰禁用，勾选后变为高亮；点击后提交并展示 loading",
+      "owner_id": "u12"
+    }
+  ],
+  "notes": {
+    "页面状态": "提供验证码登录与密码登录两种切换形态"
+  }
 }
 ```
 

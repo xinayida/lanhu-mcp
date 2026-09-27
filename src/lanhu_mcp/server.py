@@ -33,9 +33,9 @@ mcp = MCPServer(
     "lanhu-mcp",
     version=__version__,
     instructions=(
-        "蓝湖设计稿 MCP。最快捷方式：直接调用 lanhu_inspect_url(url) 查看任意蓝湖页面或画板链接；"
-        "或通过传统流程：lanhu_set_cookie 认证 → lanhu_get_teams → lanhu_get_projects → "
-        "lanhu_get_screens → lanhu_get_annotations 读取标注 → lanhu_download_asset 下载切图。"
+        "蓝湖设计稿与原型文档 MCP。最快捷方式：直接调用 lanhu_inspect_url(url) 查看任意蓝湖页面、画板或 Axure 原型链接；"
+        "设计稿流程：lanhu_set_cookie 认证 → lanhu_get_screens → lanhu_get_annotations 读取标注 → lanhu_download_asset 下载切图；"
+        "原型/PRD 流程：lanhu_list_product_documents → lanhu_get_pages 获取页面目录 → lanhu_get_page_content 提取需求说明与便签。"
     ),
 )
 
@@ -277,6 +277,78 @@ async def lanhu_download_asset(
     )
     file_path = await _client.download_asset(asset, save_dir)
     return {"success": True, "file_path": file_path, "message": f"已下载到: {file_path}"}
+
+
+# ─────────────────────── 工具：PRD / 原型文档 (Axure) ──────────
+
+
+@mcp.tool()
+@_lanhu_errors
+async def lanhu_list_product_documents(
+    project_id: Annotated[Optional[str], Field(description="项目 ID（若提供 url 则可选）")] = None,
+    team_id: Annotated[Optional[str], Field(description="团队 ID（可选）")] = None,
+    url: Annotated[Optional[str], Field(description="蓝湖项目链接或文档链接（提供时自动提取 project_id）")] = None,
+) -> list[dict]:
+    """获取项目下的所有产品文档/Axure 原型文档列表。支持直接传入蓝湖链接。"""
+    _ensure_auth()
+    if url:
+        parsed = parse_lanhu_url(url)
+        project_id = project_id or parsed.project_id
+        team_id = team_id or parsed.team_id
+    if not project_id:
+        raise ToolError("缺少 project_id 参数，请提供 project_id 或传入包含 pid 的蓝湖链接")
+    docs = await _client.get_product_documents(project_id, team_id)
+    return [d.model_dump() for d in docs]
+
+
+@mcp.tool()
+@_lanhu_errors
+async def lanhu_get_pages(
+    project_id: Annotated[Optional[str], Field(description="项目 ID（若提供 url 则可选）")] = None,
+    doc_id: Annotated[Optional[str], Field(description="Axure 原型文档 ID（若提供 url 则可选）")] = None,
+    team_id: Annotated[Optional[str], Field(description="团队 ID（可选）")] = None,
+    url: Annotated[Optional[str], Field(description="蓝湖 Axure 原型文档链接（如 productDoc 链接，提供时自动提取 pid 和 doc_id）")] = None,
+) -> dict:
+    """获取 Axure 原型的页面目录树 (Sitemap) 及清单。支持直接传入原型链接。"""
+    _ensure_auth()
+    if url:
+        parsed = parse_lanhu_url(url)
+        project_id = project_id or parsed.project_id
+        doc_id = doc_id or parsed.doc_id
+        team_id = team_id or parsed.team_id
+    if not project_id or not doc_id:
+        raise ToolError("缺少 project_id 或 doc_id 参数，请提供对应 ID 或传入包含 pid 与 doc_id 的原型链接")
+    result = await _client.get_axure_sitemap(project_id, doc_id, team_id)
+    return {
+        "doc_id": result.get("doc_id"),
+        "doc_name": result.get("doc_name"),
+        "project_id": result.get("project_id"),
+        "version": result.get("version"),
+        "page_count": result.get("page_count"),
+        "pages": result.get("pages"),
+    }
+
+
+@mcp.tool()
+@_lanhu_errors
+async def lanhu_get_page_content(
+    page_name: Annotated[str, Field(description="页面名称或文件名（例如 '登录页' 或 '登录页.html'）")],
+    project_id: Annotated[Optional[str], Field(description="项目 ID（若提供 url 则可选）")] = None,
+    doc_id: Annotated[Optional[str], Field(description="Axure 原型文档 ID（若提供 url 则可选）")] = None,
+    team_id: Annotated[Optional[str], Field(description="团队 ID（可选）")] = None,
+    url: Annotated[Optional[str], Field(description="蓝湖 Axure 原型文档链接（提供时自动提取 pid 和 doc_id）")] = None,
+) -> dict:
+    """提取 Axure 页面中的需求说明文本、便签 (annotations) 和备注 (notes)。支持直接传入原型链接。"""
+    _ensure_auth()
+    if url:
+        parsed = parse_lanhu_url(url)
+        project_id = project_id or parsed.project_id
+        doc_id = doc_id or parsed.doc_id
+        team_id = team_id or parsed.team_id
+    if not project_id or not doc_id:
+        raise ToolError("缺少 project_id 或 doc_id 参数，请提供对应 ID 或传入包含 pid 与 doc_id 的原型链接")
+    page = await _client.get_axure_page_content(project_id, doc_id, page_name, team_id)
+    return page.model_dump()
 
 
 # ─────────────────────── 辅助函数 ──────────────────────────────

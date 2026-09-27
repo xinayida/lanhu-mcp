@@ -237,3 +237,36 @@ class LanhuParsedURL(BaseModel):
     page_id: Optional[str] = None
     sid: Optional[str] = None
 
+
+# ─────────────────────────── 原型 / 产品文档 (PRD) ───────────
+
+class LanhuProductDoc(BaseModel):
+    """产品需求文档 (PRD / Axure 原型)"""
+    id: str
+    name: str
+    type: str = "axure"
+    project_id: Optional[str] = None
+    team_id: Optional[str] = None
+    last_version_num: Optional[int] = None
+    latest_version: Optional[str] = None
+    create_time: Optional[str] = None
+    update_time: Optional[str] = None
+    url: Optional[str] = None
+
+
+class LanhuAxurePage(BaseModel):
+    """Axure 原型页面"""
+    id: str
+    name: str
+    filename: str  # 例如 "登录页.html"
+    type: str = "Wireframe"
+    level: int = 0
+    folder: str = "根目录"
+    path: str = ""
+    has_children: bool = False
+    # 详情（加载页面内容后填充）
+    text_content: list[str] = Field(default_factory=list)
+    annotations: list[dict[str, Any]] = Field(default_factory=list)
+    notes: dict[str, Any] = Field(default_factory=dict)
+
+
