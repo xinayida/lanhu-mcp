@@ -50,3 +50,9 @@ lanhu-mcp = "lanhu_mcp.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/lanhu_mcp"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]

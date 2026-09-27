@@ -201,17 +201,20 @@ class LanhuClient:
 
     # ─────────────────────────── 设计图（Screens）────────────────
 
-    async def get_screens(self, project_id: str, team_id: str) -> list[LanhuScreen]:
+    async def get_screens(self, project_id: str, team_id: str | None = None) -> list[LanhuScreen]:
         """获取项目下所有设计图（画板）列表"""
+        params: dict[str, Any] = {"project_id": project_id}
+        if team_id:
+            params["team_id"] = team_id
         result = await self._get(
             "/api/project/images",
-            params={"project_id": project_id, "team_id": team_id},
+            params=params,
         )
         images = (result or {}).get("images", []) if isinstance(result, dict) else []
         return [self._parse_screen_basic(img, project_id) for img in images]
 
     async def search_images(
-        self, project_id: str, team_id: str, keyword: str
+        self, project_id: str, team_id: str | None = None, keyword: str = ""
     ) -> list[LanhuScreen]:
         """按名称关键词过滤设计图"""
         screens = await self.get_screens(project_id, team_id)
@@ -230,16 +233,20 @@ class LanhuClient:
 
     # ─────────────────────────── 标注（Annotations）──────────────
 
-    async def _fetch_dds(self, project_id: str, image_id: str, team_id: str) -> tuple[LanhuScreen, dict]:
+    async def _fetch_dds(
+        self, project_id: str, image_id: str, team_id: str | None = None
+    ) -> tuple[LanhuScreen, dict]:
         """取设计图元信息 + 最新版本的图层 JSON（DDS）"""
+        params: dict[str, Any] = {
+            "image_id": image_id,
+            "project_id": project_id,
+            "dds_status": 1,
+        }
+        if team_id:
+            params["team_id"] = team_id
         info = await self._get(
             "/api/project/image",
-            params={
-                "image_id": image_id,
-                "project_id": project_id,
-                "team_id": team_id,
-                "dds_status": 1,
-            },
+            params=params,
         )
         if not info:
             raise LanhuAPIError(f"获取设计图 {image_id} 的信息失败")
@@ -269,7 +276,9 @@ class LanhuClient:
             logger.warning(f"设计图 {image_id} 没有版本 JSON（可能是纯图片）")
         return screen, dds
 
-    async def get_annotations(self, project_id: str, image_id: str, team_id: str) -> LanhuScreen:
+    async def get_annotations(
+        self, project_id: str, image_id: str, team_id: str | None = None
+    ) -> LanhuScreen:
         """获取单张设计图的完整标注：图层树 + 切图资源"""
         screen, dds = await self._fetch_dds(project_id, image_id, team_id)
         if "artboard" in dds:
@@ -1103,17 +1112,130 @@ class LanhuClient:
                 )
         return out
 
-    async def get_assets(self, project_id: str, image_id: str, team_id: str) -> list[LanhuAsset]:
+    async def get_assets(
+        self, project_id: str, image_id: str, team_id: str | None = None
+    ) -> list[LanhuAsset]:
         """获取设计图中的切图列表（svg 为矢量图标，webp 为位图切图）"""
         _, dds = await self._fetch_dds(project_id, image_id, team_id)
         if "artboard" in dds:
             return self._parse_figma_assets(dds.get("artboard") or {})
         return self._parse_assets(dds.get("info") or [])
 
+    async def resolve_invite_link(self, sid: str) -> dict:
+        """解析蓝湖分享/邀请链接短码（通过官方 /api/share/url/resolve）"""
+        result = await self._post("/api/share/url/resolve", json={"short_id": sid})
+        return result or {}
+
+    async def inspect_url(self, url: str) -> dict:
+        """智能解析任意蓝湖 URL 并返回相应项目画板/单图详情/文档信息"""
+        from .url_parser import parse_lanhu_url
+
+        parsed = parse_lanhu_url(url)
+        if parsed.url_type == "invite_link" and parsed.sid:
+            try:
+                invite_res = await self.resolve_invite_link(parsed.sid)
+                target_url = (
+                    invite_res.get("url")
+                    or invite_res.get("target_url")
+                    or invite_res.get("redirect_url")
+                )
+                if target_url:
+                    inner_result = await self.inspect_url(target_url)
+                    inner_result["invite_sid"] = parsed.sid
+                    return inner_result
+                return {
+                    "type": "invite_link",
+                    "url": url,
+                    "parsed": parsed.model_dump(),
+                    "invite_data": invite_res,
+                    "message": "已尝试解析邀请链接，详情见 invite_data。",
+                }
+            except Exception as e:
+                return {
+                    "type": "invite_link",
+                    "url": url,
+                    "parsed": parsed.model_dump(),
+                    "error": f"解析邀请链接失败: {e}",
+                }
+
+        if parsed.url_type == "screen_detail" and parsed.project_id and parsed.image_id:
+            screen = await self.get_annotations(
+                project_id=parsed.project_id,
+                image_id=parsed.image_id,
+                team_id=parsed.team_id,
+            )
+            return {
+                "type": "screen_detail",
+                "url": url,
+                "parsed": parsed.model_dump(),
+                "screen": {
+                    "id": screen.id,
+                    "name": screen.name,
+                    "width": screen.width,
+                    "height": screen.height,
+                    "is_oversized": screen.is_oversized,
+                    "thumbnail_url": screen.thumbnail_url,
+                    "layer_count": len(screen.layers),
+                    "asset_count": len(screen.assets),
+                    "assets": [
+                        {
+                            "id": a.id,
+                            "name": a.name,
+                            "format": a.format,
+                            "download_url": a.download_url,
+                        }
+                        for a in screen.assets
+                    ],
+                },
+                "message": f"成功识别单张设计图: {screen.name} ({screen.width}x{screen.height})。可调用 lanhu_get_annotations 获取完整图层与 CSS。",
+            }
+
+        if parsed.url_type == "stage_project" and parsed.project_id:
+            screens = await self.get_screens(
+                project_id=parsed.project_id,
+                team_id=parsed.team_id,
+            )
+            return {
+                "type": "stage_project",
+                "url": url,
+                "parsed": parsed.model_dump(),
+                "screen_count": len(screens),
+                "screens": [
+                    {
+                        "id": s.id,
+                        "name": s.name,
+                        "width": s.width,
+                        "height": s.height,
+                        "is_oversized": s.is_oversized,
+                        "thumbnail_url": s.thumbnail_url,
+                    }
+                    for s in screens
+                ],
+                "message": f"成功获取项目下的 {len(screens)} 个设计画板。可调用 lanhu_get_annotations(project_id='{parsed.project_id}', image_id=...) 查看具体画板标注。",
+            }
+
+        if parsed.url_type == "product_doc":
+            return {
+                "type": "product_doc",
+                "url": url,
+                "parsed": parsed.model_dump(),
+                "message": f"已识别为蓝湖 Axure/原型文档 (doc_id={parsed.doc_id}, project_id={parsed.project_id})。",
+            }
+
+        return {
+            "type": "unknown",
+            "url": url,
+            "parsed": parsed.model_dump(),
+            "message": "未能识别出具体的蓝湖项目或画板，请确认 URL 格式是否正确。",
+        }
+
+    def _download_http_client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(timeout=60.0, follow_redirects=True, trust_env=False)
+
     async def download_asset(
         self, asset: LanhuAsset, save_dir: Optional[str] = None
     ) -> str:
-        """下载切图资源到本地文件。所有位图切图统一转换为 WebP 格式保存，矢量图标保持 SVG 格式。"""
+        """下载切图资源到本地文件。所有位图切图统一转换为 WebP 格式保存，矢量图标保持 SVG 格式。具备超大图防护。"""
         if not asset.download_url:
             raise LanhuAPIError(f"资源 {asset.name} 没有下载链接")
 
@@ -1126,7 +1248,7 @@ class LanhuClient:
         clean_name = re.sub(r"\.(png|jpe?g|webp|svg)$", "", asset.name, flags=re.IGNORECASE)
         safe_name = re.sub(r"[^\w\-]", "_", clean_name).strip("_") or "asset"
 
-        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True, trust_env=False) as client:
+        async with self._download_http_client() as client:
             resp = await client.get(asset.download_url)  # OSS 直链，公开
             resp.raise_for_status()
 
@@ -1142,12 +1264,30 @@ class LanhuClient:
                 file_path = save_path / f"{safe_name}.svg"
                 file_path.write_bytes(content)
             else:
-                # 所有位图一律以高质量无损 WebP 格式保存
+                # 所有位图一律以高质量无损 WebP 格式保存，增加对超大图防解压炸弹保护
                 import io
+                import warnings
                 from PIL import Image
+
                 file_path = save_path / f"{safe_name}.webp"
-                with Image.open(io.BytesIO(content)) as im:
-                    im.save(file_path, format="WEBP", lossless=True)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error", Image.DecompressionBombError)
+                    warnings.simplefilter("ignore", Image.DecompressionBombWarning)
+                    try:
+                        with Image.open(io.BytesIO(content)) as im:
+                            if im.width * im.height > 40_000_000:
+                                logger.warning(
+                                    f"资源 {asset.name} 尺寸超大 ({im.width}x{im.height})，以原始格式保存"
+                                )
+                                orig_ext = (im.format or "png").lower()
+                                file_path = save_path / f"{safe_name}.{orig_ext}"
+                                file_path.write_bytes(content)
+                            else:
+                                im.save(file_path, format="WEBP", lossless=True)
+                    except Image.DecompressionBombError:
+                        logger.warning(f"资源 {asset.name} 触发解压炸弹限制，以原始字节流直接保存")
+                        file_path = save_path / f"{safe_name}.bin"
+                        file_path.write_bytes(content)
 
         logger.info(f"已下载: {file_path} ({file_path.stat().st_size} bytes)")
         return str(file_path)

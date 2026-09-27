@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from typing import Any, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 
 # ─────────────────────────── 通用 ────────────────────────────
@@ -204,6 +204,14 @@ class LanhuScreen(BaseModel):
     assets: list[LanhuAsset] = Field(default_factory=list)
     background_color: Optional[LanhuColor] = None
 
+    @computed_field
+    @property
+    def is_oversized(self) -> bool:
+        """判断是否为超大设计图（单边 > 8192 或 总像素 > 25,000,000）"""
+        if self.width is not None and self.height is not None:
+            return (self.width * self.height > 25_000_000) or (max(self.width, self.height) > 8192)
+        return False
+
 
 # ─────────────────────────── 用户 ────────────────────────────
 
@@ -213,3 +221,19 @@ class LanhuUser(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
     avatar_url: Optional[str] = None
+
+
+# ─────────────────────────── URL 解析 ────────────────────────
+
+class LanhuParsedURL(BaseModel):
+    """蓝湖 URL 解析结果"""
+    raw_url: str
+    url_type: str = "unknown"  # "stage_project", "screen_detail", "product_doc", "invite_link", "unknown"
+    project_id: Optional[str] = None
+    team_id: Optional[str] = None
+    image_id: Optional[str] = None
+    doc_id: Optional[str] = None
+    version_id: Optional[str] = None
+    page_id: Optional[str] = None
+    sid: Optional[str] = None
+

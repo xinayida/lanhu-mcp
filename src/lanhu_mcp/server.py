@@ -17,6 +17,7 @@ from . import __version__
 from .auth import LanhuAuth, LanhuAuthError
 from .client import LanhuAPIError, LanhuClient
 from .models import LanhuAsset
+from .url_parser import parse_lanhu_url
 
 load_dotenv()
 
@@ -32,10 +33,9 @@ mcp = MCPServer(
     "lanhu-mcp",
     version=__version__,
     instructions=(
-        "蓝湖设计稿 MCP。典型流程：lanhu_set_cookie 认证 → lanhu_get_teams → "
-        "lanhu_get_projects(team_id) → lanhu_get_screens(project_id, team_id) → "
-        "lanhu_get_annotations(project_id, image_id, team_id) 读取标注 → "
-        "lanhu_download_asset 下载切图。"
+        "蓝湖设计稿 MCP。最快捷方式：直接调用 lanhu_inspect_url(url) 查看任意蓝湖页面或画板链接；"
+        "或通过传统流程：lanhu_set_cookie 认证 → lanhu_get_teams → lanhu_get_projects → "
+        "lanhu_get_screens → lanhu_get_annotations 读取标注 → lanhu_download_asset 下载切图。"
     ),
 )
 
@@ -141,17 +141,51 @@ async def lanhu_search_projects(
     return [p.model_dump() for p in projects]
 
 
+# ─────────────────────── 工具：快捷 URL 统一查看 ────────────────
+@mcp.tool()
+@_lanhu_errors
+async def lanhu_inspect_url(
+    url: Annotated[
+        str,
+        Field(
+            description=(
+                "任意蓝湖页面链接（如项目画板 stage 链接、单图详情 detailDetach 链接、"
+                "原型文档 product 链接、或分享邀请 invite 链接）。"
+                "自动识别类型并返回画板列表、完整图层标注或解析结果。"
+            )
+        ),
+    ],
+) -> dict:
+    """智能解析蓝湖 URL 并查看内容。最省心的统一入口。
+
+    支持场景：
+    - 输入单图画板链接：自动返回完整标注、尺寸、CSS 属性及切图资源；
+    - 输入项目画板列表链接：自动返回所有设计图画板列表与缩略图；
+    - 输入分享/邀请短链：自动调用原生 API 解析底层真实项目与链接；
+    - 输入原型文档链接：识别 Axure 文档标识并给出引导。
+    """
+    _ensure_auth()
+    return await _client.inspect_url(url)
+
+
 # ─────────────────────── 工具：设计图 & 标注 ────────────────────
 
 
 @mcp.tool()
 @_lanhu_errors
 async def lanhu_get_screens(
-    project_id: Annotated[str, Field(description="项目 ID（从 lanhu_get_projects 获取）")],
-    team_id: Annotated[str, Field(description="团队 ID")],
+    project_id: Annotated[Optional[str], Field(description="项目 ID（若提供 url 则可选）")] = None,
+    team_id: Annotated[Optional[str], Field(description="团队 ID（可选）")] = None,
+    url: Annotated[Optional[str], Field(description="蓝湖项目画板链接（例如 https://lanhuapp.com/web/#/item/project/stage?tid=xxx&pid=xxx，提供时自动提取参数）")] = None,
 ) -> list[dict]:
-    """获取指定项目下的所有设计图（画板）列表，返回缩略图与尺寸信息。"""
+    """获取指定项目下的所有设计图（画板）列表，返回缩略图与尺寸信息。支持直接传入蓝湖链接。"""
     _ensure_auth()
+    if url:
+        parsed = parse_lanhu_url(url)
+        project_id = project_id or parsed.project_id
+        team_id = team_id or parsed.team_id
+    if not project_id:
+        raise ToolError("缺少 project_id 参数，请提供 project_id 或传入包含 pid 的蓝湖链接")
     screens = await _client.get_screens(project_id, team_id)
     return [_screen_summary(s) for s in screens]
 
@@ -159,19 +193,27 @@ async def lanhu_get_screens(
 @mcp.tool()
 @_lanhu_errors
 async def lanhu_get_annotations(
-    project_id: Annotated[str, Field(description="项目 ID")],
-    image_id: Annotated[str, Field(description="设计图 ID（从 lanhu_get_screens 获取）")],
-    team_id: Annotated[str, Field(description="团队 ID")],
+    project_id: Annotated[Optional[str], Field(description="项目 ID（若提供 url 则可选）")] = None,
+    image_id: Annotated[Optional[str], Field(description="设计图 ID（若提供 url 则可选）")] = None,
+    team_id: Annotated[Optional[str], Field(description="团队 ID（可选）")] = None,
+    url: Annotated[Optional[str], Field(description="蓝湖单图画板链接（例如 https://lanhuapp.com/web/#/item/project/detailDetach?pid=xxx&image_id=xxx，提供时自动提取参数）")] = None,
 ) -> dict:
-    """获取单张设计图的完整标注数据（最核心的工具）。
+    """获取单张设计图的完整标注数据（最核心的工具）。支持直接传入蓝湖单图链接。
 
     返回内容包含：
     - 所有图层的树形结构（位置、尺寸、颜色、字体、行高、圆角、阴影、边框等）
     - 文本图层的文字内容与字体样式
     - 可下载的切图/图标列表（含 download_url）
-    - 画板尺寸与缩略图
+    - 画板尺寸、超大图安全标识与缩略图
     """
     _ensure_auth()
+    if url:
+        parsed = parse_lanhu_url(url)
+        project_id = project_id or parsed.project_id
+        image_id = image_id or parsed.image_id
+        team_id = team_id or parsed.team_id
+    if not project_id or not image_id:
+        raise ToolError("缺少 project_id 或 image_id 参数，请提供对应 ID 或传入包含 pid 与 image_id 的蓝湖链接")
     screen = await _client.get_annotations(project_id, image_id, team_id)
     return _screen_full(screen)
 
@@ -180,8 +222,8 @@ async def lanhu_get_annotations(
 @_lanhu_errors
 async def lanhu_search_images(
     project_id: Annotated[str, Field(description="项目 ID")],
-    team_id: Annotated[str, Field(description="团队 ID")],
-    keyword: Annotated[str, Field(description="搜索关键词")],
+    team_id: Annotated[Optional[str], Field(description="团队 ID（可选）")] = None,
+    keyword: Annotated[str, Field(description="搜索关键词")] = "",
 ) -> list[dict]:
     """在指定项目中按名称关键词搜索设计图。"""
     _ensure_auth()
@@ -195,12 +237,20 @@ async def lanhu_search_images(
 @mcp.tool()
 @_lanhu_errors
 async def lanhu_get_assets(
-    project_id: Annotated[str, Field(description="项目 ID")],
-    image_id: Annotated[str, Field(description="设计图 ID")],
-    team_id: Annotated[str, Field(description="团队 ID")],
+    project_id: Annotated[Optional[str], Field(description="项目 ID（若提供 url 则可选）")] = None,
+    image_id: Annotated[Optional[str], Field(description="设计图 ID（若提供 url 则可选）")] = None,
+    team_id: Annotated[Optional[str], Field(description="团队 ID（可选）")] = None,
+    url: Annotated[Optional[str], Field(description="蓝湖单图链接（提供时自动提取参数）")] = None,
 ) -> list[dict]:
-    """获取设计图中所有可下载的切图/图标资源列表（矢量图为 svg，位图切图统一为 webp）。"""
+    """获取设计图中所有可下载的切图/图标资源列表（矢量图为 svg，位图切图统一为 webp）。支持直接传入蓝湖链接。"""
     _ensure_auth()
+    if url:
+        parsed = parse_lanhu_url(url)
+        project_id = project_id or parsed.project_id
+        image_id = image_id or parsed.image_id
+        team_id = team_id or parsed.team_id
+    if not project_id or not image_id:
+        raise ToolError("缺少 project_id 或 image_id 参数，请提供对应 ID 或传入包含 pid 与 image_id 的蓝湖链接")
     assets = await _client.get_assets(project_id, image_id, team_id)
     return [a.model_dump() for a in assets]
 
@@ -239,6 +289,7 @@ def _screen_summary(screen: Any) -> dict:
         "name": screen.name,
         "width": screen.width,
         "height": screen.height,
+        "is_oversized": getattr(screen, "is_oversized", False),
         "thumbnail_url": screen.thumbnail_url,
         "project_id": screen.project_id,
     }
@@ -379,6 +430,7 @@ def _screen_full(screen: Any) -> dict:
         "name": screen.name,
         "width": screen.width,
         "height": screen.height,
+        "is_oversized": getattr(screen, "is_oversized", False),
         "thumbnail_url": screen.thumbnail_url,
         "layers": [layer_to_dict(l) for l in screen.layers],
         "assets": [

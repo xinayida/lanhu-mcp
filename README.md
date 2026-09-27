@@ -282,27 +282,32 @@ args = ["--from", "git+https://github.com/xinayida/lanhu-mcp.git", "lanhu-mcp"]
 
 | 工具名称 | 功能描述 | 核心参数 |
 |:---|:---|:---|
+| `lanhu_inspect_url` | **⚡ 极速统一入口**：智能解析任意蓝湖 URL，自动识别画板列表、单图详情、原型或分享链接 | `url`: 蓝湖页面链接 |
 | `lanhu_set_cookie` | 设置认证 Cookie 并持久化保存到 `~/.lanhu/cookie` | `cookie`: 包含 `session` 和 `user_token` 的 Cookie 字符串 |
 | `lanhu_get_teams` | 获取当前用户的团队列表（兼具认证连通性检测） | *(无)* |
 | `lanhu_get_projects` | 获取指定团队下的所有设计项目 | `team_id`: 团队 ID |
 | `lanhu_search_projects` | 按名称关键词搜索团队内的项目 | `team_id`: 团队 ID, `keyword`: 搜索关键词 |
-| `lanhu_get_screens` | 获取指定项目下的画板列表（含尺寸和缩略图） | `project_id`: 项目 ID, `team_id`: 团队 ID |
-| `lanhu_search_images` | 按名称关键词搜索画板/设计图 | `project_id`: 项目 ID, `team_id`: 团队 ID, `keyword`: 搜索关键词 |
-| `lanhu_get_annotations` | **⭐ 核心工具**：获取单张设计图的完整图层树与 CSS 标注数据 | `project_id`: 项目 ID, `image_id`: 设计图 ID, `team_id`: 团队 ID |
-| `lanhu_get_assets` | 获取画板中所有可导出的切图/图标直链资源列表 | `project_id`: 项目 ID, `image_id`: 设计图 ID, `team_id`: 团队 ID |
-| `lanhu_download_asset` | 下载切图到本地磁盘（位图自动转 WebP，矢量图保存为 SVG） | `asset_id`, `asset_name`, `download_url`, `format`, `save_dir` |
+| `lanhu_get_screens` | 获取指定项目下的画板列表（含尺寸和缩略图），支持直接传入 `url` | `project_id` / `url`, `team_id` (可选) |
+| `lanhu_search_images` | 按名称关键词搜索画板/设计图 | `project_id`: 项目 ID, `team_id`: 团队 ID (可选), `keyword`: 搜索关键词 |
+| `lanhu_get_annotations` | **⭐ 核心工具**：获取单张设计图的完整图层树与 CSS 标注数据，支持直接传入单图 `url` | `project_id` & `image_id` 或 `url`, `team_id` (可选) |
+| `lanhu_get_assets` | 获取画板中所有可导出的切图/图标直链资源列表，支持直接传入 `url` | `project_id` & `image_id` 或 `url`, `team_id` (可选) |
+| `lanhu_download_asset` | 下载切图到本地磁盘（位图自动转 WebP，矢量图保存为 SVG，具超大图安全防护） | `asset_id`, `asset_name`, `download_url`, `format`, `save_dir` |
 
 ---
 
 ## 🧭 典型 AI 编程工作流
 
-当您向 AI 助手提出需求：
+### 方式一：直接提供蓝湖链接（最省心推荐 🚀）
+
+直接将浏览器地址栏里的蓝湖链接发给 AI：
 
 ```text
-用户：“请帮我还原蓝湖项目里的收银台支付页面，并自动下载页面所需的图标资源。”
+用户：“请帮我根据这个蓝湖画板实现登录页面：https://lanhuapp.com/web/#/item/project/detailDetach?pid=xxx&image_id=yyy”
 ```
 
-AI 助手将自主按如下链路协同执行：
+AI 助手将直接调用 `lanhu_inspect_url` 或 `lanhu_get_annotations(url=...)`，**一步完成图层树与样式提取**，无需多轮往返！
+
+### 方式二：传统按项目逐步探索
 
 ```mermaid
 graph LR
@@ -316,6 +321,10 @@ graph LR
 ### 代码调用示例
 
 ```python
+# 极速单入口方式：
+result = lanhu_inspect_url(url="https://lanhuapp.com/web/#/item/project/detailDetach?pid=xxx&image_id=yyy")
+
+# 或传统分步方式：
 # 1. 验证认证并获取团队
 teams = lanhu_get_teams()
 team_id = teams[0]["id"]

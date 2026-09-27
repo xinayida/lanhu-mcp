@@ -274,27 +274,32 @@ Add to `.vscode/mcp.json`:
 
 | Tool Name | Description | Key Parameters |
 |:---|:---|:---|
+| `lanhu_inspect_url` | **⚡ Instant Entry**: Smartly inspect any Lanhu URL (artboard list, single screen detailDetach, prototype, or share link) | `url`: Lanhu web URL |
 | `lanhu_set_cookie` | Set authentication cookie and persist to `~/.lanhu/cookie` | `cookie`: Cookie string with `session` and `user_token` |
 | `lanhu_get_teams` | Retrieve user teams and verify connection | *(None)* |
 | `lanhu_get_projects` | List design projects under a team | `team_id`: Team ID |
 | `lanhu_search_projects` | Search projects in a team by keyword | `team_id`: Team ID, `keyword`: Search keyword |
-| `lanhu_get_screens` | List artboards/screens in a project (with dimensions & thumbnail) | `project_id`: Project ID, `team_id`: Team ID |
-| `lanhu_search_images` | Search artboards/screens by name keyword | `project_id`: Project ID, `team_id`: Team ID, `keyword`: Search keyword |
-| `lanhu_get_annotations` | **⭐ Core Tool**: Retrieve deep layer tree, typography, colors, CSS, and slice links | `project_id`: Project ID, `image_id`: Screen ID, `team_id`: Team ID |
-| `lanhu_get_assets` | List exportable slice assets (SVG for vectors, WebP for bitmaps) | `project_id`: Project ID, `image_id`: Screen ID, `team_id`: Team ID |
-| `lanhu_download_asset` | Download slices locally (bitmaps auto-converted to WebP, vectors saved as SVG) | `asset_id`, `asset_name`, `download_url`, `format`, `save_dir` |
+| `lanhu_get_screens` | List artboards/screens in a project (with dimensions & thumbnail), supports `url` | `project_id` / `url`, `team_id` (optional) |
+| `lanhu_search_images` | Search artboards/screens by name keyword | `project_id`: Project ID, `team_id`: Team ID (optional), `keyword`: Search keyword |
+| `lanhu_get_annotations` | **⭐ Core Tool**: Retrieve deep layer tree, typography, colors, CSS, and slice links, supports `url` | `project_id` & `image_id` or `url`, `team_id` (optional) |
+| `lanhu_get_assets` | List exportable slice assets (SVG for vectors, WebP for bitmaps), supports `url` | `project_id` & `image_id` or `url`, `team_id` (optional) |
+| `lanhu_download_asset` | Download slices locally (bitmaps auto-converted to WebP, vectors saved as SVG, with oversized image safety) | `asset_id`, `asset_name`, `download_url`, `format`, `save_dir` |
 
 ---
 
 ## 🧭 Typical AI Workflow
 
-When you ask an AI coding assistant:
+### Option 1: Direct Lanhu URL (Recommended 🚀)
+
+Paste any Lanhu URL directly to your AI assistant:
 
 ```text
-User: "Please implement the Checkout page from the Lanhu project, and download all required icons."
+User: "Please implement this login screen: https://lanhuapp.com/web/#/item/project/detailDetach?pid=xxx&image_id=yyy"
 ```
 
-The AI assistant will execute the following pipeline:
+The AI assistant will invoke `lanhu_inspect_url` or `lanhu_get_annotations(url=...)` to **extract the complete layer tree and CSS in a single step**!
+
+### Option 2: Traditional Step-by-Step Exploration
 
 ```mermaid
 graph LR
@@ -308,6 +313,10 @@ graph LR
 ### Python API Example
 
 ```python
+# Instant single-entry inspection:
+result = await client.inspect_url("https://lanhuapp.com/web/#/item/project/detailDetach?pid=xxx&image_id=yyy")
+
+# Or traditional step-by-step:
 # 1. Validate auth & get teams
 teams = await client.get_teams()
 team_id = teams[0].id
