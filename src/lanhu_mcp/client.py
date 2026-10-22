@@ -41,6 +41,7 @@ from .models import (
     LanhuTextSpan,
 )
 from .url_parser import parse_lanhu_url
+from .synthesizer import fix_screen_dimensions, count_total_layers, synthesize_visual_summary
 
 logger = logging.getLogger(__name__)
 
@@ -445,6 +446,7 @@ class LanhuClient:
             nodes = dds.get("info") or []
             screen.layers = self._build_layers(nodes)
             screen.assets = self._parse_assets(nodes)
+        fix_screen_dimensions(screen)
         return screen
 
     # ─────────────────────────── 图层解析 ────────────────────────
@@ -1485,8 +1487,6 @@ class LanhuClient:
 
     async def inspect_url(self, url: str) -> dict:
         """智能解析任意蓝湖 URL 并返回相应项目画板/单图详情/文档信息"""
-        from .url_parser import parse_lanhu_url
-
         parsed = parse_lanhu_url(url)
         if parsed.url_type == "invite_link" and parsed.sid:
             try:
@@ -1521,6 +1521,8 @@ class LanhuClient:
                 image_id=parsed.image_id,
                 team_id=parsed.team_id,
             )
+            summary = synthesize_visual_summary(screen)
+            total_layers = summary.get("total_layer_count") or len(screen.layers)
             return {
                 "type": "screen_detail",
                 "url": url,
@@ -1532,9 +1534,9 @@ class LanhuClient:
                     "height": screen.height,
                     "is_oversized": screen.is_oversized,
                     "thumbnail_url": screen.thumbnail_url,
-                    "layer_count": len(screen.layers),
+                    "layer_count": total_layers,
                     "asset_count": len(screen.assets),
-                    "assets": [
+                    "assets": summary.get("assets", [
                         {
                             "id": a.id,
                             "name": a.name,
@@ -1542,9 +1544,14 @@ class LanhuClient:
                             "download_url": a.download_url,
                         }
                         for a in screen.assets
-                    ],
+                    ]),
                 },
-                "message": f"成功识别单张设计图: {screen.name} ({screen.width}x{screen.height})。可调用 lanhu_get_annotations 获取完整图层与 CSS。",
+                "visual_summary": summary,
+                "message": (
+                    f"成功识别单张设计图: {screen.name} ({screen.width}x{screen.height})，"
+                    f"包含 {total_layers} 个图层与 {len(screen.assets)} 个切图资产。"
+                    "已自动聚合生成高保真视觉摘要、组件蓝图 (Compose/Declarative) 与规范指引。"
+                ),
             }
 
         if parsed.url_type == "stage_project" and parsed.project_id:

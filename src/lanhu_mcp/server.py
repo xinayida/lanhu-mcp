@@ -18,6 +18,7 @@ from .auth import LanhuAuth, LanhuAuthError
 from .client import LanhuAPIError, LanhuClient
 from .models import LanhuAsset
 from .url_parser import parse_lanhu_url
+from .synthesizer import synthesize_visual_summary
 
 load_dotenv()
 
@@ -596,6 +597,7 @@ def _screen_full(screen: Any) -> dict:
         "height": screen.height,
         "is_oversized": getattr(screen, "is_oversized", False),
         "thumbnail_url": screen.thumbnail_url,
+        "visual_summary": synthesize_visual_summary(screen),
         "layers": [layer_to_dict(l) for l in screen.layers],
         "assets": [
             {
