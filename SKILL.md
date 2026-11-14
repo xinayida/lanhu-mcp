@@ -74,6 +74,7 @@ result = lanhu_inspect_url(url="https://lanhuapp.com/web/#/item/project/detailDe
 | 工具名称 | 适用场景 | 核心参数与返回值 |
 |:---|:---|:---|
 | `lanhu_inspect_url` | **统一总入口**。直接解析任意蓝湖 URL，一步到位返回单图视觉摘要、组件蓝图、画板列表或 Axure 原型 | `url` |
+| `lanhu_search_team_images` | **跨项目搜索**。仅凭团队 ID/链接和关键词，跨项目定位画板及所属项目定位信息 | `team_id` / `url`, `keyword`, `limit` |
 | `lanhu_get_annotations` | 获取指定单图的原始图层树、CSS 属性及 `visual_summary` | `project_id`, `image_id` 或 `url` |
 | `lanhu_get_layout_skeleton` | 智能推断响应式 Flexbox 骨架与 Tailwind 语义化类名 | `project_id`, `image_id` 或 `url` |
 | `lanhu_get_design_tokens` | 提取全局色板、字号阶梯、字重、圆角规范（支持 css/tailwind/w3c） | `project_id`, `format` |

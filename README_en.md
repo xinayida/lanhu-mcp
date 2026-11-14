@@ -280,7 +280,8 @@ Add to `.vscode/mcp.json`:
 | `lanhu_get_projects` | List design projects under a team | `team_id`: Team ID |
 | `lanhu_search_projects` | Search projects in a team by keyword | `team_id`: Team ID, `keyword`: Search keyword |
 | `lanhu_get_screens` | List artboards/screens in a project (with dimensions & thumbnail), supports `url` | `project_id` / `url`, `team_id` (optional) |
-| `lanhu_search_images` | Search artboards/screens by name keyword | `project_id`: Project ID, `team_id`: Team ID (optional), `keyword`: Search keyword |
+| `lanhu_search_images` | Search artboards/screens by name keyword in a specific project | `project_id`: Project ID, `team_id`: Team ID (optional), `keyword`: Search keyword |
+| `lanhu_search_team_images` | **🔍 Cross-Project Search**: Search artboards/screens across all projects within a team without needing `project_id`, with fault tolerance and direct links | `team_id` / `url`, `keyword` (optional), `limit` (default 20) |
 | `lanhu_get_annotations` | **⭐ Core Tool**: Retrieve deep layer tree, typography, colors, CSS, and slice links, supports `url` | `project_id` & `image_id` or `url`, `team_id` (optional) |
 | `lanhu_get_assets` | List exportable slice assets (SVG for vectors, WebP for bitmaps), supports `url` | `project_id` & `image_id` or `url`, `team_id` (optional) |
 | `lanhu_download_asset` | Download slices locally (bitmaps auto-converted to WebP, vectors saved as SVG, with oversized image safety) | `asset_id`, `asset_name`, `download_url`, `format`, `save_dir` |

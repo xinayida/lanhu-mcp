@@ -199,6 +199,7 @@ class LanhuScreen(BaseModel):
     height: Optional[float] = None
     thumbnail_url: Optional[str] = None
     project_id: Optional[str] = None
+    updated_at: Optional[str] = None
     # 详情字段（调用 get_annotations 后填充）
     layers: list[LanhuLayer] = Field(default_factory=list)
     assets: list[LanhuAsset] = Field(default_factory=list)

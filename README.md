@@ -288,7 +288,8 @@ args = ["--from", "git+https://github.com/xinayida/lanhu-mcp.git", "lanhu-mcp"]
 | `lanhu_get_projects` | 获取指定团队下的所有设计项目 | `team_id`: 团队 ID |
 | `lanhu_search_projects` | 按名称关键词搜索团队内的项目 | `team_id`: 团队 ID, `keyword`: 搜索关键词 |
 | `lanhu_get_screens` | 获取指定项目下的画板列表（含尺寸和缩略图），支持直接传入 `url` | `project_id` / `url`, `team_id` (可选) |
-| `lanhu_search_images` | 按名称关键词搜索画板/设计图 | `project_id`: 项目 ID, `team_id`: 团队 ID (可选), `keyword`: 搜索关键词 |
+| `lanhu_search_images` | 按名称关键词搜索画板/设计图（已知项目 ID 时使用） | `project_id`: 项目 ID, `team_id`: 团队 ID (可选), `keyword`: 搜索关键词 |
+| `lanhu_search_team_images` | **🔍 跨项目搜索**：在指定团队内跨所有项目按名称搜索画板（无需事先知道项目 ID），支持并发与容错，返回直达单图链接与项目信息 | `team_id` / `url`, `keyword` (可选), `limit` (默认 20) |
 | `lanhu_get_annotations` | **⭐ 核心工具**：获取单张设计图的完整图层树与 CSS 标注数据，支持直接传入单图 `url` | `project_id` & `image_id` 或 `url`, `team_id` (可选) |
 | `lanhu_get_assets` | 获取画板中所有可导出的切图/图标直链资源列表，支持直接传入 `url` | `project_id` & `image_id` 或 `url`, `team_id` (可选) |
 | `lanhu_download_asset` | 下载切图到本地磁盘（位图自动转 WebP，矢量图保存为 SVG，具超大图安全防护） | `asset_id`, `asset_name`, `download_url`, `format`, `save_dir` |

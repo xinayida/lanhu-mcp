@@ -35,6 +35,7 @@ mcp = MCPServer(
     version=__version__,
     instructions=(
         "蓝湖设计稿与原型文档 MCP。最快捷方式：直接调用 lanhu_inspect_url(url) 查看任意蓝湖页面、画板或 Axure 原型链接；"
+        "团队跨项目搜索：若不知道设计稿所属项目，调用 lanhu_search_team_images(team_id, keyword) 跨项目定位；"
         "设计系统与代码生成：lanhu_get_design_tokens 提取色板字体等全局 Token；lanhu_get_layout_skeleton 智能推断响应式 Flexbox 骨架与 Tailwind 类名；"
         "切图资源：lanhu_batch_export_assets 批量导出画板切图并生成 manifest.json 清单；"
         "设计稿流程：lanhu_get_screens → lanhu_get_annotations 读取标注；"
@@ -73,7 +74,7 @@ def _ensure_auth() -> None:
     if not _auth.is_authenticated:
         raise LanhuAuthError(
             "尚未认证（~/.lanhu/cookie 不存在）。请运行 "
-            "uv run /Users/wangwei/.gemini/antigravity/scratch/lanhu-mcp/scripts/refresh_cookie.py "
+            "uv run scripts/refresh_cookie.py "
             "生成 Cookie，或调用 lanhu_set_cookie 手动设置。"
         )
 
@@ -228,10 +229,28 @@ async def lanhu_search_images(
     team_id: Annotated[Optional[str], Field(description="团队 ID（可选）")] = None,
     keyword: Annotated[str, Field(description="搜索关键词")] = "",
 ) -> list[dict]:
-    """在指定项目中按名称关键词搜索设计图。"""
+    """在指定项目中按名称关键词搜索设计图。如不知道所属项目，请使用 lanhu_search_team_images 跨项目搜索。"""
     _ensure_auth()
     screens = await _client.search_images(project_id, team_id, keyword)
     return [_screen_summary(s) for s in screens]
+
+
+@mcp.tool()
+@_lanhu_errors
+async def lanhu_search_team_images(
+    team_id: Annotated[Optional[str], Field(description="团队 ID（若提供 url 则可选）")] = None,
+    keyword: Annotated[str, Field(description="搜索关键词（设计图/画板名称）")] = "",
+    limit: Annotated[int, Field(description="最大返回数量（默认 20，最多 100）", ge=1, le=100)] = 20,
+    url: Annotated[Optional[str], Field(description="蓝湖团队或项目链接（提供时自动提取 team_id）")] = None,
+) -> dict:
+    """在指定团队内跨所有项目按名称关键词搜索设计图/画板（无需事先知道所属项目 ID）。支持直接传入蓝湖链接。"""
+    _ensure_auth()
+    if url:
+        parsed = parse_lanhu_url(url)
+        team_id = team_id or parsed.team_id
+    if not team_id:
+        raise ToolError("缺少 team_id 参数，请提供团队 ID 或包含 tid 的蓝湖链接")
+    return await _client.search_team_images(team_id=team_id, keyword=keyword, limit=limit)
 
 
 # ─────────────────────── 工具：资源下载 ─────────────────────────
@@ -457,6 +476,7 @@ def _screen_summary(screen: Any) -> dict:
         "is_oversized": getattr(screen, "is_oversized", False),
         "thumbnail_url": screen.thumbnail_url,
         "project_id": screen.project_id,
+        "updated_at": getattr(screen, "updated_at", None),
     }
 
 

@@ -8,6 +8,7 @@ API 契约（2026-08 逆向自 lanhuapp.com webapp）：
 
 from __future__ import annotations
 
+import asyncio
 import html
 import json
 import logging
@@ -284,7 +285,7 @@ class LanhuClient:
         if code == 5 or code == 30001:
             raise LanhuAuthError(
                 "未登录或认证已过期。请运行 "
-                "uv run /Users/wangwei/.gemini/antigravity/scratch/lanhu-mcp/scripts/refresh_cookie.py "
+                "uv run scripts/refresh_cookie.py "
                 "刷新 Cookie（登录态真过期时会弹浏览器要求人工登录一次）。"
             )
 
@@ -375,7 +376,97 @@ class LanhuClient:
         kw = keyword.lower()
         return [s for s in screens if kw in s.name.lower()]
 
+    async def search_team_images(
+        self,
+        team_id: str,
+        keyword: str = "",
+        limit: int = 20,
+        concurrency: int = 5,
+        project_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """在指定团队内跨所有项目搜索设计图（画板）。
+
+        - 列出团队下的所有设计项目（可由 project_ids 过滤）
+        - 限制并发并发获取各项目画板列表并做关键词过滤
+        - 遇到部分项目拉取失败时容错并记录未完成范围，避免错将部分失败误判为无结果
+        - 支持按 limit 截断返回数量
+        """
+        all_projects = await self.get_projects(team_id)
+        if project_ids:
+            target_ids = set(project_ids)
+            projects = [p for p in all_projects if p.id in target_ids]
+        else:
+            projects = all_projects
+
+        if not projects:
+            return {
+                "total_found": 0,
+                "matched_count": 0,
+                "has_more": False,
+                "searched_projects_count": 0,
+                "total_projects_count": len(all_projects),
+                "failed_projects": [],
+                "images": [],
+            }
+
+        semaphore = asyncio.Semaphore(max(1, concurrency))
+        kw = keyword.lower().strip()
+
+        async def _search_in_project(project: LanhuProject) -> tuple[list[dict[str, Any]], dict[str, str] | None]:
+            async with semaphore:
+                try:
+                    screens = await self.get_screens(project.id, team_id=team_id)
+                    matched: list[dict[str, Any]] = []
+                    for s in screens:
+                        if not kw or kw in s.name.lower():
+                            matched.append({
+                                "project_id": project.id,
+                                "project_name": project.name,
+                                "image_id": s.id,
+                                "image_name": s.name,
+                                "url": f"https://lanhuapp.com/web/#/item/project/detailDetach?pid={project.id}&image_id={s.id}&tid={team_id}",
+                                "thumbnail_url": s.thumbnail_url,
+                                "width": s.width,
+                                "height": s.height,
+                                "is_oversized": s.is_oversized,
+                                "updated_at": s.updated_at,
+                            })
+                    return matched, None
+                except Exception as e:
+                    logger.warning("检索项目 %s (%s) 画板失败: %s", project.name, project.id, e)
+                    return [], {
+                        "project_id": project.id,
+                        "project_name": project.name,
+                        "error": str(e),
+                    }
+
+        tasks = [_search_in_project(p) for p in projects]
+        results = await asyncio.gather(*tasks)
+
+        all_matched: list[dict[str, Any]] = []
+        failed_projects: list[dict[str, str]] = []
+
+        for matched, failed in results:
+            if failed:
+                failed_projects.append(failed)
+            if matched:
+                all_matched.extend(matched)
+
+        total_found = len(all_matched)
+        images = all_matched[:limit] if limit > 0 else all_matched
+
+        return {
+            "total_found": total_found,
+            "matched_count": len(images),
+            "has_more": total_found > len(images),
+            "searched_projects_count": len(projects) - len(failed_projects),
+            "total_projects_count": len(projects),
+            "failed_projects": failed_projects,
+            "images": images,
+        }
+
     def _parse_screen_basic(self, raw: dict, project_id: str) -> LanhuScreen:
+        updated = raw.get("update_time") or raw.get("updated_at") or raw.get("modify_time") or raw.get("latest_version")
         return LanhuScreen(
             id=str(raw.get("id") or ""),
             name=raw.get("name") or "",
@@ -383,6 +474,7 @@ class LanhuClient:
             height=self._to_float(raw.get("height")),
             thumbnail_url=raw.get("url"),
             project_id=project_id,
+            updated_at=str(updated) if updated is not None else None,
         )
 
     # ─────────────────────────── 标注（Annotations）──────────────
